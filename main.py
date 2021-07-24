@@ -6,7 +6,7 @@ from tax import TaxState
 
 
 def main():
-    read_transactions()
+    transaction_bank = read_transactions()
 
     parser = ArgumentParser()
     parser.add_argument('start_date', type=date)
@@ -18,4 +18,4 @@ def main():
     features = []
     if args.tax():
         features.append(TaxState)
-    run_engine(start_date, end_date, features)
+    run_engine(start_date, end_date, features, transaction_bank)

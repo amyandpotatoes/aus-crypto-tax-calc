@@ -85,7 +85,7 @@ class Holding:
         self.volume = volume
 
 
-def run_engine(start_date, end_date, additional_features):
+def run_engine(start_date, end_date, additional_features, transaction_bank):
     """
     Processes transactions throughout the specified time period, matching sell or loss transactions with the appropriate
     features.
