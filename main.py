@@ -10,7 +10,7 @@ def main():
     parser.add_argument('start_date', type=date)
     parser.add_argument('end_date', type=date)
     parser.add_argument('--tax', '-t', action='store_true')
-    parser.add_argument('--noimport', '-n', action='store_true')
+    parser.add_argument('--importchain', '-i', action='store_true')
     args = parser.parse_args()
     start_date = args.start_date
     end_date = args.end_date
@@ -18,7 +18,7 @@ def main():
     if args.tax():
         features.append(TaxState)
 
-    if not args.noimport():
+    if args.importchain():
         # read in onchain transaction data and save as csv
         # TODO
         pass
