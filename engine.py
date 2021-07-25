@@ -1,4 +1,3 @@
-from tax import TaxState
 from typing import List
 
 
@@ -29,7 +28,6 @@ class WalletState:
         self.current_time = start_date
         self.start_date = start_date
         self.end_date = end_date
-        self.tax = TaxState(start_date, end_date)
         self.tokens = dict()
         self.finished_processing = False
         self.features = [feature(start_date, end_date) for feature in additional_features]
