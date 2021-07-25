@@ -5,10 +5,10 @@ class Transaction:
     """
     Contains the information about a single transaction (buy, sell or both).
     """
-    def __init__(self, time, type, token, volume, fee):
+    def __init__(self, time, transaction_type, token, volume, fee):
         self.time = time
         # type is a TransactionType: can be buy, sell, gain or loss
-        self.type = type
+        self.transaction_type = transaction_type
         self.token = token
         self.volume = volume
         self.fee = fee
@@ -33,9 +33,11 @@ class TransactionType(Enum):
     LOSS = auto()
 
 
-def read_transactions():
+def read_transactions(start_date, end_date):
     """
     Read in transactions from different sources and sort into a transaction bank.
+    :param start_date: datetime object of earliest date to get transactions from
+    :param end_date: datetime object of latest date to get transactions from
     :return: transaction_bank, a dictionary where each entry is the name of a token and a list of transactions involving
     that token
     """
@@ -44,10 +46,12 @@ def read_transactions():
     return transaction_bank
 
 
-def read_binance_csv(transaction_bank):
+def read_binance_csv(transaction_bank, start_date, end_date):
     """
     Reads in a csv file from binance and adds transactions to the transaction bank.
     :param transaction_bank: a dictionary of transactions for each token
+    :param start_date: datetime object of earliest date to get transactions from
+    :param end_date: datetime object of latest date to get transactions from
     :return: transaction_bank
     """
     # TODO
@@ -65,13 +69,15 @@ def read_onchain_config():
     return config
 
 
-def read_onchain_transactions(website, wallet, transaction_bank):
+def read_onchain_transactions(chain, wallet, transaction_bank, start_date, end_date):
     """
     Reads in transaction data from an etherscan-based blockchain scanning website and adds transactions to the
     transaction bank.
-    :param website: string of scanning website domain
+    :param chain: string of scanning website domain
     :param wallet: string of wallet address
     :param transaction_bank: a dictionary of transactions for each token
+    :param start_date: datetime object of earliest date to get transactions from
+    :param end_date: datetime object of latest date to get transactions from
     :return: transaction_bank
     """
     # TODO

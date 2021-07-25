@@ -6,16 +6,23 @@ from tax import TaxState
 
 
 def main():
-    transaction_bank = read_transactions()
-
     parser = ArgumentParser()
     parser.add_argument('start_date', type=date)
     parser.add_argument('end_date', type=date)
     parser.add_argument('--tax', '-t', action='store_true')
+    parser.add_argument('--noimport', '-n', action='store_true')
     args = parser.parse_args()
     start_date = args.start_date
     end_date = args.end_date
     features = []
     if args.tax():
         features.append(TaxState)
+
+    if not args.noimport():
+        # read in onchain transaction data and save as csv
+        # TODO
+        pass
+
+    transaction_bank = read_transactions(start_date, end_date)
+
     run_engine(start_date, end_date, features, transaction_bank)
