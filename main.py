@@ -34,3 +34,7 @@ def main():
     transaction_bank = read_transactions(start_date, end_date)
 
     run_engine(start_date, end_date, features, transaction_bank)
+
+
+if __name__ == '__main__':
+    main()

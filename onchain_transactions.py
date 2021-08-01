@@ -68,11 +68,8 @@ def filter_transactions(result, address):
     df["to_address"] = df["to_address"].str.lower()
     df["log_events_decoded_params_value"] = df["log_events_decoded_params_value"].str.lower()
 
-    # only get lines which involve your wallet address and are not approvals
-    filtered_df = df[((df["from_address"] == address.lower())
-                      | (df["to_address"] == address.lower())
-                      | (df["log_events_decoded_params_value"] == address.lower()))
-                     & (df["log_events_decoded_signature"] != "Approval(indexed address owner, indexed address spender, uint256 value)")]
+    # only get lines which are not approvals
+    filtered_df = df[(df["log_events_decoded_signature"] != "Approval(indexed address owner, indexed address spender, uint256 value)")]
 
     # convert pandas df into csv string
     filtered_result = filtered_df.to_csv()
@@ -91,11 +88,17 @@ def save_transactions(chain, address, api_key):
     # filter transaction data to only get necessary lines
     data_csv = filter_transactions(data_text, address)
 
-    # save the data in the correct transaction-files subdirectory
+    # save the filtered data in the correct transaction-files subdirectory
     filename = os.path.join('transaction-files', chain, 'transactions.csv')
 
     with open(filename, 'w') as file:
         file.write(data_csv)
+
+    # save all transactions
+    filename = os.path.join('transaction-files', chain, 'transactions-all.csv')
+
+    with open(filename, 'w') as file:
+        file.write(data_text)
 
 
 if __name__ == '__main__':

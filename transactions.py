@@ -1,5 +1,8 @@
 import os
 import pandas as pd
+import glob
+import datetime
+import requests
 
 from enum import Enum, auto
 
@@ -21,10 +24,14 @@ class Transaction:
         self.adjusted_price_per_token = self.get_fee_adjusted_price()
 
     def get_fee_adjusted_price(self):
-        if self.transaction_type == BUY:
+        if self.transaction_type == TransactionType.BUY:
             return self.token_price + self.fee
-        elif self.transaction_type == SELL:
+        elif self.transaction_type == TransactionType.SELL:
             return self.token_price - self.fee
+        elif self.transaction_type == TransactionType.GAIN:
+            return self.token_price
+        elif self.transaction_type == TransactionType.LOSS:
+            return 0
 
     def get_token_price(self):
         # query the coingecko api here and extract the relevant data
@@ -106,5 +113,104 @@ def read_onchain_transactions(chain, wallet, transaction_bank, start_date, end_d
     :param end_date: datetime object of latest date to get transactions from
     :return: The updated transaction_bank dictionary, mapping tokens to a list of transactions
     """
-    # TODO
+    # conversion table for going from chain name to native token
+    native_token = {'ethereum': 'ETH', 'polygon': 'MATIC', 'bsc': 'BNB', 'fantom': 'FTM'}
+
+    # read all files for a given chain into single data frame
+    path = os.path.join('transaction-files', chain)
+    all_files = glob.glob(path + "/*.csv")
+
+    df_list = []
+
+    for filename in all_files:
+        df = pd.read_csv(filename, index_col=None, header=0)
+        df_list.append(df)
+
+    df = pd.concat(df_list, axis=0, ignore_index=True)
+
+    # get only transactions within date range
+    df['block_signed_at'] = pd.to_datetime(df['block_signed_at'], format="%Y-%m-%dT%H:%M:%SZ")
+    df = df[(df['block_signed_at'] >= start_date) & (df['block_signed_at'] <= end_date)]
+
+    # get unique transaction hashes
+    transaction_hashes = df['tx_hash'].unique()
+
+    # iterate through transaction hashes, adding transactions to transaction bank
+    for transaction_hash in transaction_hashes:
+        # setup object to store intermediate information about ingoing and outgoing tokens
+        temp_moves = []
+
+        # get token transfers associated with hash
+        transaction_df = df[(df['tx_hash'] == transaction_hash)
+                            & (df["log_events_decoded_signature"] == "Transfer(indexed address from, indexed address to, uint256 value)")]
+        print(transaction_hash)
+        print(df['block_signed_at'][0])
+        pd.set_option('display.max_columns', None)
+        pd.set_option('display.width', 500)
+        print(transaction_df[['from_address',
+                              'to_address',
+                              'log_events_sender_name',
+                              'log_events_sender_contract_ticker_symbol',
+                              'log_events_decoded_signature',
+                              'log_events_decoded_params_name',
+                              'log_events_decoded_params_value']])
+        pd.reset_option('display.max_rows|display.max_columns|display.width')
+
+        # get incoming tokens from token transfers
+        in_mask = (transaction_df['log_events_decoded_signature'] == 'Transfer(indexed address from, indexed address to, uint256 value)')\
+                  & (transaction_df['log_events_decoded_params_name'] == 'to')\
+                  & (transaction_df['log_events_decoded_params_value'] == wallet.lower())
+        in_indicies = transaction_df.index[in_mask]
+
+        # for each incoming token, get details
+        for ind in in_indicies:
+
+            print(int(transaction_df['log_events_decoded_params_value'][ind+1]) / 1000000000000000000)
+            temp_moves.append({'token': transaction_df['log_events_sender_contract_ticker_symbol'][ind],
+                               'direction': 'in',
+                               'quantity': int(transaction_df['log_events_decoded_params_value'][ind+1]) / 1000000000000000000})
+
+        # get outgoing tokens from token transfers
+        out_mask = (transaction_df['log_events_decoded_signature'] == 'Transfer(indexed address from, indexed address to, uint256 value)') \
+                  & (transaction_df['log_events_decoded_params_name'] == 'from') \
+                  & (transaction_df['log_events_decoded_params_value'] == wallet.lower())
+        out_indicies = transaction_df.index[out_mask]
+
+        # for each outgoing token, get details
+        for ind in out_indicies:
+            temp_moves.append({'token': transaction_df['log_events_sender_contract_ticker_symbol'][ind],
+                               'direction': 'out',
+                               'quantity': int(transaction_df['log_events_decoded_params_value'][ind + 2]) / 1000000000000000000})
+
+        # get internal transactions related to hash
+        response = requests.get(f"https://api.bscscan.com/api?module=account&action=txlistinternal&txhash={transaction_hash}&apikey=5PXUSYGCJ73QPUWP13BXXMNMQMSKITX2ZC")
+
+        result = response.json()['result']
+        print(result)
+
+        for internal_transaction in result:
+            # get incoming tokens from internal transactions
+            if internal_transaction['to'].lower() == wallet.lower():
+                temp_moves.append({'token': native_token[chain], 'direction': 'in', 'quantity': int(internal_transaction['value']) / 1000000000000000000})
+
+            # get outgoing tokens from internal transfers
+            if internal_transaction['from'].lower() == wallet.lower():
+                temp_moves.append({'token': native_token[chain], 'direction': 'out', 'quantity': int(internal_transaction['value']) / 1000000000000000000})
+
+        print(temp_moves)
+
+        hello = input("Next: ")
+
+        # work out transaction type
+
+        # add to transaction bank
+
     return transaction_bank
+
+
+if __name__ == '__main__':
+    read_onchain_transactions('bsc',
+                              '0xc3eBf192E1AfF802217a08Fd6b2eeDbBD4D87334',
+                              dict(),
+                              datetime.datetime(2020, 5, 17),
+                              datetime.datetime.now())
