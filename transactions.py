@@ -6,13 +6,15 @@ import requests
 
 from enum import Enum, auto
 
+from pycoingecko import CoinGeckoAPI
+
 
 class Transaction:
     """
     Contains the information about a single transaction (buy, sell or both).
     """
     def __init__(self, time, transaction_type, token, volume, fee):
-        self.time = time
+        self.time =  time # datetime objet
         # type is a TransactionType: can be buy, sell, gain or loss
         self.transaction_type = transaction_type
         self.token = token
@@ -33,9 +35,31 @@ class Transaction:
         elif self.transaction_type == TransactionType.LOSS:
             return 0
 
-    def get_token_price(self):
+    def get_token_price(self, currency='aud'):
+        # convert the time to unix time
+        epoch_time = int(self.time.timestamp())
+        twelve_hours = 12 * 60 * 60
+        # query the api +- 12 hours around the time of transaction, then find the closest time
+        from_timestamp = epoch_time - twelve_hours
+        to_timestamp = epoch_time + twelve_hours
+
         # query the coingecko api here and extract the relevant data
-        token_price = 0
+        cg = CoinGeckoAPI()
+        result = cg.get_coin_market_chart_range_by_id(
+            id=self.token,
+            vs_currency=currency,
+            from_timestamp=from_timestamp,
+            to_timestamp=to_timestamp
+        )
+        # find the closest time to the time of transaction
+        token_price = None # just in case the is an error
+        min_time_difference = float('inf')
+        for time, price in result['prices']:
+            time_difference = abs(epoch_time - time)
+            if  time_difference < min_time_difference:
+                min_time_difference = time_difference
+                token_price = price
+        
         return token_price
 
 
