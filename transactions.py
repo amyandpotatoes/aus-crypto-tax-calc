@@ -109,33 +109,36 @@ def create_coingecko_id_lookup():
 
 
 def get_token_price(token, transaction_time, coingeckoid_lookup, currency='aud'):
-    # convert token ticker to coingecko token ID
-    token_id = coingeckoid_lookup[token.lower()]
-    # convert the time to unix time
-    epoch_time = int(transaction_time.timestamp())
-    twelve_hours = 12 * 60 * 60
-    # query the api +- 12 hours around the time of transaction, then find the closest time
-    from_timestamp = epoch_time - twelve_hours
-    to_timestamp = epoch_time + twelve_hours
+    if token.lower() == currency.lower():
+        return 1
+    else:
+        # convert token ticker to coingecko token ID
+        token_id = coingeckoid_lookup[token.lower()]
+        # convert the time to unix time
+        epoch_time = int(transaction_time.timestamp())
+        twelve_hours = 12 * 60 * 60
+        # query the api +- 12 hours around the time of transaction, then find the closest time
+        from_timestamp = epoch_time - twelve_hours
+        to_timestamp = epoch_time + twelve_hours
 
-    # query the coingecko api here and extract the relevant data
-    cg = CoinGeckoAPI()
-    result = cg.get_coin_market_chart_range_by_id(
-        id=token_id,
-        vs_currency=currency,
-        from_timestamp=from_timestamp,
-        to_timestamp=to_timestamp
-    )
-    # find the closest time to the time of transaction
-    token_price = None  # just in case the is an error
-    min_time_difference = float('inf')
-    for time, price in result['prices']:
-        time_difference = abs(epoch_time - time)
-        if time_difference < min_time_difference:
-            min_time_difference = time_difference
-            token_price = price
+        # query the coingecko api here and extract the relevant data
+        cg = CoinGeckoAPI()
+        result = cg.get_coin_market_chart_range_by_id(
+            id=token_id,
+            vs_currency=currency,
+            from_timestamp=from_timestamp,
+            to_timestamp=to_timestamp
+        )
+        # find the closest time to the time of transaction
+        token_price = None  # just in case the is an error
+        min_time_difference = float('inf')
+        for time, price in result['prices']:
+            time_difference = abs(epoch_time - time)
+            if time_difference < min_time_difference:
+                min_time_difference = time_difference
+                token_price = price
 
-    return token_price
+        return token_price
 
 
 def get_moves_and_values_by_direction(moves, transaction_time, coingeckoid_lookup, currency='aud'):
@@ -156,7 +159,43 @@ def get_moves_and_values_by_direction(moves, transaction_time, coingeckoid_looku
         price_total = price_1token * move['quantity']
         out_values.append(price_total)
 
-    return in_moves, out_moves, in_values, out_values
+    # calculate proportional values, so that if there are multiple ingoing tokens you can work out how much of the outgoing value each is 'swapped for'
+    in_prop = [val / sum(in_values) for val in in_values]
+    out_prop = [val / sum(out_values) for val in out_values]
+
+    return in_moves, out_moves, in_values, out_values, in_prop, out_prop
+
+
+def add_transactions_w_opposite(transaction_bank, self_moves, self_prop, self_count, opp_values, opp_count, gas_fee_fiat, transaction_time, transaction_type):
+    # calculate raw price per token and tax-correct price after fees, and add transactions to transaction bank
+    # use out_values to calculate buy price of in tokens and vice versa
+    for move, prop in zip(self_moves, self_prop):
+        raw_price_1token = sum(opp_values) * prop / move['quantity']
+        price_inc_fee_1token = (sum(opp_values) * prop + (gas_fee_fiat / (self_count + opp_count))) / move['quantity']
+        temp_transaction = Transaction(transaction_time, transaction_type, move['token'], move['quantity'], (gas_fee_fiat / (self_count + opp_count)), raw_price_1token,
+                                       price_inc_fee_1token)
+        print(vars(temp_transaction))
+        _ = input('Adding above transaction...')
+        if move['token'] in transaction_bank:
+            transaction_bank[move['token']].append(temp_transaction)
+        else:
+            transaction_bank[move['token']] = [temp_transaction]
+
+
+def add_transactions_no_opposite(transaction_bank, self_moves, self_count, gas_fee_fiat, transaction_time, transaction_type, taxable_prop):
+    # calculate raw price per token and tax-correct price after fees, and add transactions to transaction bank
+    # use value of tokens at the time you bought them as value
+    for move in self_moves:
+        raw_price_1token = move['value'] / move['quantity']
+        price_inc_fee_1token = (move['value'] * taxable_prop + (gas_fee_fiat / self_count)) / (move['quantity'] * taxable_prop)
+        temp_transaction = Transaction(transaction_time, transaction_type, move['token'], move['quantity'] * taxable_prop, gas_fee_fiat / self_count, raw_price_1token,
+                                       price_inc_fee_1token)
+        print(vars(temp_transaction))
+        _ = input('Adding above transaction...')
+        if move['token'] in transaction_bank:
+            transaction_bank[move['token']].append(temp_transaction)
+        else:
+            transaction_bank[move['token']] = [temp_transaction]
 
 
 def read_onchain_transactions(chain, wallet, transaction_bank, start_date, end_date, coingeckoid_lookup, currency='aud'):
@@ -184,12 +223,8 @@ def read_onchain_transactions(chain, wallet, transaction_bank, start_date, end_d
                        4: 'Staking',
                        5: 'Unstaking + Income',
                        6: 'Income',
-                       7: 'Non-taxable transfer',
-                       8: 'Outgoing Gift',
-                       9: 'Wanted Airdrop',
-                       10: 'Worthless Airdrop',
-                       11: 'Other taxable',
-                       12: 'Other non-taxable'}
+                       7: 'Outgoing Taxable',
+                       8: 'Non-taxable'}
 
     # read all files for a given chain into single data frame
     path = os.path.join('transaction-files', chain)
@@ -282,81 +317,87 @@ def read_onchain_transactions(chain, wallet, transaction_bank, start_date, end_d
         #                    4: 'Staking',
         #                    5: 'Unstaking + Income',
         #                    6: 'Income',
-        #                    7: 'Cross-platform transfer',
-        #                    8: 'Outgoing Gift',
-        #                    9: 'Wanted Airdrop',
-        #                    10: 'Worthless Airdrop',
-        #                    11: 'Other taxable',
-        #                    12: 'Other non-taxable'}
+        #                    7: 'Outgoing Taxable',
+        #                    8: 'Non-taxable'}
 
         if in_count > 0 and out_count > 0:
             class_guess = 'Buy + Sell'
             class_int = correct_transaction_classification(class_guess, classifications)
             if not class_int:
                 class_int = 1
-        elif in_count == 1 and out_count == 0:
+        elif (in_count == 1 and out_count == 0) or (currency.lower() in [move['token'].lower() for move in temp_moves if move['direction'] == 'out']):
             class_guess = 'Buy'
             class_int = correct_transaction_classification(class_guess, classifications)
             if not class_int:
                 class_int = 2
-        elif in_count == 0 and out_count > 0:
+        elif (in_count == 0 and out_count > 0) or (currency.lower() in [move['token'].lower() for move in temp_moves if move['direction'] == 'in']):
             class_guess = 'Sell'
             class_int = correct_transaction_classification(class_guess, classifications)
             if not class_int:
                 class_int = 3
         elif in_count > 1 and out_count == 0:
-            class_guess = 'Unstaking + Income'
+            class_guess = 'Income'
             class_int = correct_transaction_classification(class_guess, classifications)
             if not class_int:
                 class_int = 5
         elif in_count == 0 and out_count == 0:
-            class_guess = 'Other non-taxable'
+            class_guess = 'Non-taxable'
             class_int = correct_transaction_classification(class_guess, classifications)
             if not class_int:
-                class_int = 12
+                class_int = 8
         else:
-            class_guess = 'Other non-taxable'
+            class_guess = 'Non-taxable'
             class_int = correct_transaction_classification(class_guess, classifications)
             if not class_int:
-                class_int = 12
+                class_int = 8
 
         # Use classification to add to transaction bank
         if class_int == 1:  # Buy + Sell
-
             # get values of tokens, used to calculate buy and sell cost bases/prices
-            in_moves, out_moves, in_values, out_values = get_moves_and_values_by_direction(temp_moves, transaction_time, coingeckoid_lookup, currency)
-
-            # calculate raw price per token and tax-correct price after fees, and add transactions to transaction bank
-            # use out_values to calculate buy price of in tokens and vice versa
-            # start with incoming tokens (buys)
-            if len(in_moves) == 1:
-                move = in_moves[0]
-                raw_price_1token = sum(out_values) / move['quantity']
-                price_inc_fee_1token = (sum(out_values) + (gas_fee_fiat / (in_count + out_count))) / move['quantity']
-                temp_transaction = Transaction(transaction_time, TransactionType.BUY, move['token'], move['quantity'], (gas_fee_fiat / (in_count + out_count)), raw_price_1token, price_inc_fee_1token)
-                print(vars(temp_transaction))
-                _ = input('Adding above transaction...')
-                if move['token'] in transaction_bank:
-                    transaction_bank[move['token']].append(temp_transaction)
+            in_moves, out_moves, in_values, out_values, in_prop, out_prop = get_moves_and_values_by_direction(temp_moves, transaction_time, coingeckoid_lookup, currency)
+            # add transactions with incoming tokens (buys)
+            add_transactions_w_opposite(transaction_bank, in_moves, in_prop, in_count, out_values, out_count, gas_fee_fiat, transaction_time, TransactionType.BUY)
+            # then add transactions with outgoing tokens (sells)
+            add_transactions_w_opposite(transaction_bank, out_moves, out_prop, out_count, in_values, in_count, gas_fee_fiat, transaction_time, TransactionType.SELL)
+        elif class_int == 2:  # Buy
+            # get values of tokens, used to calculate buy and sell cost bases/prices
+            in_moves, out_moves, in_values, out_values, in_prop, out_prop = get_moves_and_values_by_direction(temp_moves, transaction_time, coingeckoid_lookup, currency)
+            # add transactions with incoming tokens (buys)
+            add_transactions_w_opposite(transaction_bank, in_moves, in_prop, in_count, out_values, out_count, gas_fee_fiat, transaction_time, TransactionType.BUY)
+        elif class_int == 3:  # Sell
+            # get values of tokens, used to calculate buy and sell cost bases/prices
+            in_moves, out_moves, in_values, out_values, in_prop, out_prop = get_moves_and_values_by_direction(temp_moves, transaction_time, coingeckoid_lookup, currency)
+            # then add transactions with outgoing tokens (sells)
+            add_transactions_w_opposite(transaction_bank, out_moves, out_prop, out_count, in_values, in_count, gas_fee_fiat, transaction_time, TransactionType.SELL)
+        elif class_int == 5:  # Unstaking + Income
+            # get values of tokens, used to calculate buy and sell cost bases/prices
+            in_moves, _, in_values, _, in_prop, _ = get_moves_and_values_by_direction(temp_moves, transaction_time, coingeckoid_lookup, currency)
+            # work out which tokens are unstaking (you already owned them) and which are income
+            print("-------------------------------------------------------------------------------------------------")
+            for move, value in zip(in_moves, in_values):
+                print(f"Token: {move}")
+                income = input("Are some of these tokens income (tokens that you did not stake)? (y/n)")
+                if income.lower() == "y":
+                    all_income = input("Are all of these tokens income? (y/n)")
+                    if all_income.lower() == "n":
+                        income_amount = int(input("How many units are income?"))
+                        income_prop = income_amount/move['quantity']
+                        add_transactions_no_opposite(transaction_bank, [move], in_count, gas_fee_fiat, transaction_time, TransactionType.GAIN, income_prop)
+                    else:
+                        add_transactions_no_opposite(transaction_bank, [move], in_count, gas_fee_fiat, transaction_time, TransactionType.GAIN, 1)
                 else:
-                    transaction_bank[move['token']] = [temp_transaction]
-            else:
-                raise Exception()
-            # then do outgoing tokens (sells)
-            if len(out_moves) == 1:
-                move = out_moves[0]
-                raw_price_1token = sum(in_values) / move['quantity']
-                price_inc_fee_1token = (sum(in_values) + (gas_fee_fiat / (in_count + out_count))) / move['quantity']
-                temp_transaction = Transaction(transaction_time, TransactionType.SELL, move['token'], move['quantity'], (gas_fee_fiat / (in_count + out_count)), raw_price_1token, price_inc_fee_1token)
-                print(vars(temp_transaction))
-                _ = input('Adding above transaction...')
-                if move['token'] in transaction_bank:
-                    transaction_bank[move['token']].append(temp_transaction)
-                else:
-                    transaction_bank[move['token']] = [temp_transaction]
-            else:
-                raise Exception()
-        elif class_int in [4, 7, 10, 12]:
+                    continue
+        elif class_int == 6:  # income
+            # get values of tokens, used to calculate buy and sell cost bases/prices
+            in_moves, _, in_values, _, in_prop, _ = get_moves_and_values_by_direction(temp_moves, transaction_time, coingeckoid_lookup, currency)
+            # add transactions with incoming tokens (income)
+            add_transactions_no_opposite(transaction_bank, in_moves, in_count, gas_fee_fiat, transaction_time, TransactionType.GAIN, 1)
+        elif class_int == 7:  # outgoing taxable
+            # get values of tokens, used to calculate buy and sell cost bases/prices
+            _, out_moves, _, out_values, _, out_prop = get_moves_and_values_by_direction(temp_moves, transaction_time, coingeckoid_lookup, currency)
+            # add transactions with incoming tokens (income)
+            add_transactions_no_opposite(transaction_bank, out_moves, out_count, gas_fee_fiat, transaction_time, TransactionType.LOSS, 1)
+        elif class_int in [4, 8]:
             _ = input('No taxable transactions...')
 
     return transaction_bank
