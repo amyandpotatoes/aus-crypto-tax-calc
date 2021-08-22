@@ -8,6 +8,38 @@ from enum import Enum, auto
 
 from pycoingecko import CoinGeckoAPI
 
+# DEFINE GLOBALS
+
+# conversion table for going from chain name to native token
+NATIVE_TOKEN = {'ethereum': 'ETH', 'polygon': 'MATIC', 'bsc': 'BNB', 'fantom': 'FTM'}
+
+# classifications for transactions
+CLASSIFICATIONS = {1: 'Buy + Sell',
+                   2: 'Buy',
+                   3: 'Sell',
+                   4: 'Staking',
+                   5: 'Unstaking + Income',
+                   6: 'Income',
+                   7: 'Outgoing Taxable',
+                   8: 'Non-taxable'}
+
+
+def create_coingecko_id_lookup():
+    """
+    Create a dictionary that links token tickers to coingecko IDs.
+    :return: lookup, that dictionary
+    """
+    cg = CoinGeckoAPI()
+    coin_list = cg.get_coins_list()
+    lookup = {}
+    for coin in coin_list:
+        lookup[coin['symbol'].lower()] = coin['id']
+    return lookup
+
+
+# create coingecko lookup table
+COINGECKOID_LOOKUP = create_coingecko_id_lookup()
+
 
 class Transaction:
     """
@@ -63,42 +95,27 @@ def read_onchain_config():
     return config
 
 
-def correct_transaction_classification(class_guess, classifications):
+def correct_transaction_classification(class_guess):
     """
     Print information asking the user whether the predicted classification is correct, and return class_int, which
     is the user-selected transaction classification
     :param class_guess: the guess of the system
-    :param classifications: a dictionary of possible classifications
     :return: class_int, an int represented the user-selected classification
     """
-    for i in range(1, len(classifications) + 1):
-        print(f"{i}. {classifications[i]}")
+    for i in range(1, len(CLASSIFICATIONS) + 1):
+        print(f"{i}. {CLASSIFICATIONS[i]}")
     class_int = input(f"This looks like {class_guess}, press enter for yes, or enter the correct number:")
     if class_int:
         class_int = int(class_int)
     return class_int
 
 
-def create_coingecko_id_lookup():
-    """
-    Create a dictionary that links token tickers to coingecko IDs.
-    :return: lookup, that dictionary
-    """
-    cg = CoinGeckoAPI()
-    coin_list = cg.get_coins_list()
-    lookup = {}
-    for coin in coin_list:
-        lookup[coin['symbol'].lower()] = coin['id']
-    return lookup
-
-
-def get_token_price(token, transaction_time, coingeckoid_lookup, currency='aud'):
+def get_token_price(token, transaction_time, currency='aud'):
     """
     Get the price of a token, using either the coingecko API or if that's not available, an average of recent
     transactions (with removal of outliers).
     :param token: token ticker
     :param transaction_time: the time that the transaction occurred, a datetime object
-    :param coingeckoid_lookup: a dictionary that pairs token tickers to coingecko IDs
     :param currency: a string, the currency used (usually 'aud')
     :return: token_price, a float representing the price of a single token
     """
@@ -106,7 +123,7 @@ def get_token_price(token, transaction_time, coingeckoid_lookup, currency='aud')
         return 1
     else:
         # convert token ticker to coingecko token ID
-        token_id = coingeckoid_lookup[token.lower()]
+        token_id = COINGECKOID_LOOKUP[token.lower()]
         # convert the time to unix time
         epoch_time = int(transaction_time.timestamp())
         twelve_hours = 12 * 60 * 60
@@ -134,7 +151,7 @@ def get_token_price(token, transaction_time, coingeckoid_lookup, currency='aud')
         return token_price
 
 
-def get_moves_and_values_by_direction(moves, transaction_time, coingeckoid_lookup, currency='aud'):
+def get_moves_and_values_by_direction(moves, transaction_time, currency='aud'):
     """
     Given a list of moves (movements of tokens in our out of wallet), splits the moves based on direction (whether they
     are incoming or outgoing) and calculates the total values of each token within the transaction, and the proportion
@@ -147,8 +164,6 @@ def get_moves_and_values_by_direction(moves, transaction_time, coingeckoid_looku
     0.1 * value(C) + fees and the cost basis of token B is 0.9 * value (C) + fees / 3.
     :param moves: a list of dictionaries, where each dictionary gives information about the movement of a token
     :param transaction_time: the time that the transaction occurred, a datetime object
-    :param coingeckoid_lookup: a dictionary that takes in a token ticker and gives the ID needed to look it up using
-    the coingecko api
     :param currency: a string, the currency used (usually 'aud')
     :return: in_moves & out_moves, subset lists of the moves dictionaries, in_values & out_values, lists of the total
     values exchanged of each of the tokens exchanged, in_prop & out_prop, lists of the proportions of value in each
@@ -162,12 +177,12 @@ def get_moves_and_values_by_direction(moves, transaction_time, coingeckoid_looku
     in_values = []
     out_values = []
     for move in in_moves:
-        price_1token = get_token_price(move['token'], transaction_time, coingeckoid_lookup, currency)
+        price_1token = get_token_price(move['token'], transaction_time, currency)
         price_total = price_1token * move['quantity']
         in_values.append(price_total)
 
     for move in out_moves:
-        price_1token = get_token_price(move['token'], transaction_time, coingeckoid_lookup, currency)
+        price_1token = get_token_price(move['token'], transaction_time, currency)
         price_total = price_1token * move['quantity']
         out_values.append(price_total)
 
@@ -238,11 +253,10 @@ def add_transactions_no_opposite(transaction_bank, self_moves, self_count, gas_f
             transaction_bank[move['token']] = [temp_transaction]
 
 
-def classify_transaction(temp_moves, classifications, currency):
+def classify_transaction(temp_moves, currency):
     """
     Get input from user to classify transaction type, allowing tax rules to be applied correctly
     :param temp_moves: list of dictionaries, each with information about the movement of a single cryptocurrency token within a transaction
-    :param classifications: static dictionary with all possible classifications
     :param currency: string, name of currency used (usually 'aud')
     :return: class_int, the classification as an integer, in_count, the number of different incoming tokens, out_count, the number of different outgoing tokens
     """
@@ -262,32 +276,32 @@ def classify_transaction(temp_moves, classifications, currency):
 
     if in_count > 0 and out_count > 0:
         class_guess = 'Buy + Sell'
-        class_int = correct_transaction_classification(class_guess, classifications)
+        class_int = correct_transaction_classification(class_guess)
         if not class_int:
             class_int = 1
     elif (in_count == 1 and out_count == 0) or (currency.lower() in [move['token'].lower() for move in temp_moves if move['direction'] == 'out']):
         class_guess = 'Buy'
-        class_int = correct_transaction_classification(class_guess, classifications)
+        class_int = correct_transaction_classification(class_guess)
         if not class_int:
             class_int = 2
     elif (in_count == 0 and out_count > 0) or (currency.lower() in [move['token'].lower() for move in temp_moves if move['direction'] == 'in']):
         class_guess = 'Sell'
-        class_int = correct_transaction_classification(class_guess, classifications)
+        class_int = correct_transaction_classification(class_guess)
         if not class_int:
             class_int = 3
     elif in_count > 1 and out_count == 0:
         class_guess = 'Income'
-        class_int = correct_transaction_classification(class_guess, classifications)
+        class_int = correct_transaction_classification(class_guess)
         if not class_int:
             class_int = 5
     elif in_count == 0 and out_count == 0:
         class_guess = 'Non-taxable'
-        class_int = correct_transaction_classification(class_guess, classifications)
+        class_int = correct_transaction_classification(class_guess)
         if not class_int:
             class_int = 8
     else:
         class_guess = 'Non-taxable'
-        class_int = correct_transaction_classification(class_guess, classifications)
+        class_int = correct_transaction_classification(class_guess)
         if not class_int:
             class_int = 8
 
@@ -311,24 +325,24 @@ def add_transaction_to_transaction_bank(class_int, transaction_bank, temp_moves,
     """
     if class_int == 1:  # Buy + Sell
         # get values of tokens, used to calculate buy and sell cost bases/prices
-        in_moves, out_moves, in_values, out_values, in_prop, out_prop = get_moves_and_values_by_direction(temp_moves, transaction_time, coingeckoid_lookup, currency)
+        in_moves, out_moves, in_values, out_values, in_prop, out_prop = get_moves_and_values_by_direction(temp_moves, transaction_time, currency)
         # add transactions with incoming tokens (buys)
         add_transactions_w_opposite(transaction_bank, in_moves, in_prop, in_count, out_values, out_count, gas_fee_fiat, transaction_time, TransactionType.BUY)
         # then add transactions with outgoing tokens (sells)
         add_transactions_w_opposite(transaction_bank, out_moves, out_prop, out_count, in_values, in_count, gas_fee_fiat, transaction_time, TransactionType.SELL)
     elif class_int == 2:  # Buy
         # get values of tokens, used to calculate buy and sell cost bases/prices
-        in_moves, out_moves, in_values, out_values, in_prop, out_prop = get_moves_and_values_by_direction(temp_moves, transaction_time, coingeckoid_lookup, currency)
+        in_moves, out_moves, in_values, out_values, in_prop, out_prop = get_moves_and_values_by_direction(temp_moves, transaction_time, currency)
         # add transactions with incoming tokens (buys)
         add_transactions_w_opposite(transaction_bank, in_moves, in_prop, in_count, out_values, out_count, gas_fee_fiat, transaction_time, TransactionType.BUY)
     elif class_int == 3:  # Sell
         # get values of tokens, used to calculate buy and sell cost bases/prices
-        in_moves, out_moves, in_values, out_values, in_prop, out_prop = get_moves_and_values_by_direction(temp_moves, transaction_time, coingeckoid_lookup, currency)
+        in_moves, out_moves, in_values, out_values, in_prop, out_prop = get_moves_and_values_by_direction(temp_moves, transaction_time, currency)
         # then add transactions with outgoing tokens (sells)
         add_transactions_w_opposite(transaction_bank, out_moves, out_prop, out_count, in_values, in_count, gas_fee_fiat, transaction_time, TransactionType.SELL)
     elif class_int == 5:  # Unstaking + Income
         # get values of tokens, used to calculate buy and sell cost bases/prices
-        in_moves, _, in_values, _, in_prop, _ = get_moves_and_values_by_direction(temp_moves, transaction_time, coingeckoid_lookup, currency)
+        in_moves, _, in_values, _, in_prop, _ = get_moves_and_values_by_direction(temp_moves, transaction_time, currency)
         # work out which tokens are unstaking (you already owned them) and which are income
         print("-------------------------------------------------------------------------------------------------")
         for move, value in zip(in_moves, in_values):
@@ -346,23 +360,22 @@ def add_transaction_to_transaction_bank(class_int, transaction_bank, temp_moves,
                 continue
     elif class_int == 6:  # income
         # get values of tokens, used to calculate buy and sell cost bases/prices
-        in_moves, _, in_values, _, in_prop, _ = get_moves_and_values_by_direction(temp_moves, transaction_time, coingeckoid_lookup, currency)
+        in_moves, _, in_values, _, in_prop, _ = get_moves_and_values_by_direction(temp_moves, transaction_time, currency)
         # add transactions with incoming tokens (income)
         add_transactions_no_opposite(transaction_bank, in_moves, in_count, gas_fee_fiat, transaction_time, TransactionType.GAIN, 1)
     elif class_int == 7:  # outgoing taxable
         # get values of tokens, used to calculate buy and sell cost bases/prices
-        _, out_moves, _, out_values, _, out_prop = get_moves_and_values_by_direction(temp_moves, transaction_time, coingeckoid_lookup, currency)
+        _, out_moves, _, out_values, _, out_prop = get_moves_and_values_by_direction(temp_moves, transaction_time, currency)
         # add transactions with incoming tokens (income)
         add_transactions_no_opposite(transaction_bank, out_moves, out_count, gas_fee_fiat, transaction_time, TransactionType.LOSS, 1)
     elif class_int in [4, 8]:
         _ = input('No taxable transactions...')
 
 
-def read_onchain_transactions(chain, wallet, transaction_bank, start_date, end_date, coingeckoid_lookup, currency='aud'):
+def read_onchain_transactions(chain, wallet, transaction_bank, start_date, end_date, currency='aud'):
     """
     Reads in transaction data from an etherscan-based blockchain scanning website and adds transactions to the
     transaction bank.
-    :param coingeckoid_lookup: dictionary that maps coin tickers to coingecko ids
     :param chain: string of scanning website domain
     :param wallet: string of wallet address
     :param transaction_bank: a dictionary mapping a token to a list of transactions
@@ -372,19 +385,6 @@ def read_onchain_transactions(chain, wallet, transaction_bank, start_date, end_d
     :return: The updated transaction_bank dictionary, mapping tokens to a list of transactions
     """
     # TODO: check for value way off market value
-
-    # conversion table for going from chain name to native token
-    native_token = {'ethereum': 'ETH', 'polygon': 'MATIC', 'bsc': 'BNB', 'fantom': 'FTM'}
-
-    # classifications for transactions
-    classifications = {1: 'Buy + Sell',
-                       2: 'Buy',
-                       3: 'Sell',
-                       4: 'Staking',
-                       5: 'Unstaking + Income',
-                       6: 'Income',
-                       7: 'Outgoing Taxable',
-                       8: 'Non-taxable'}
 
     # read all files for a given chain into single data frame
     path = os.path.join('transaction-files', chain)
@@ -423,8 +423,8 @@ def read_onchain_transactions(chain, wallet, transaction_bank, start_date, end_d
 
         # get gas fee from transaction
         gas_fee_native_token = max(transaction_df['gas_spent'] * transaction_df['gas_price'] / 1e18)
-        gas_fee_fiat = gas_fee_native_token * get_token_price(native_token[chain], transaction_time, coingeckoid_lookup, currency)
-        print(f"Gas fee: {gas_fee_native_token} {native_token[chain]} = {gas_fee_fiat} {currency.upper()}")
+        gas_fee_fiat = gas_fee_native_token * get_token_price(NATIVE_TOKEN[chain], transaction_time, currency)
+        print(f"Gas fee: {gas_fee_native_token} {NATIVE_TOKEN[chain]} = {gas_fee_fiat} {currency.upper()}")
 
         # get incoming tokens from token transfers
         in_mask = (transaction_df['log_events_decoded_signature'] == 'Transfer(indexed address from, indexed address to, uint256 value)')\
@@ -460,14 +460,14 @@ def read_onchain_transactions(chain, wallet, transaction_bank, start_date, end_d
         for internal_transaction in result:
             # get incoming tokens from internal transactions
             if internal_transaction['to'].lower() == wallet.lower():
-                temp_moves.append({'token': native_token[chain], 'direction': 'in', 'quantity': int(internal_transaction['value']) / 1e18})
+                temp_moves.append({'token': NATIVE_TOKEN[chain], 'direction': 'in', 'quantity': int(internal_transaction['value']) / 1e18})
 
             # get outgoing tokens from internal transfers
             if internal_transaction['from'].lower() == wallet.lower():
-                temp_moves.append({'token': native_token[chain], 'direction': 'out', 'quantity': int(internal_transaction['value']) / 1e18})
+                temp_moves.append({'token': NATIVE_TOKEN[chain], 'direction': 'out', 'quantity': int(internal_transaction['value']) / 1e18})
 
         # attempt to classify and check with user
-        class_int, in_count, out_count = classify_transaction(temp_moves, classifications, currency)
+        class_int, in_count, out_count = classify_transaction(temp_moves, currency)
 
         # Use classification to add to transaction bank
         add_transaction_to_transaction_bank(class_int, transaction_bank, temp_moves, in_count, out_count, gas_fee_fiat, transaction_time, currency)
@@ -497,9 +497,8 @@ def read_binance_csv(transaction_bank, start_date, end_date):
 
 
 if __name__ == '__main__':
-    coingeckoid_lookup = create_coingecko_id_lookup()
     read_onchain_transactions('bsc',
                               '0xc3eBf192E1AfF802217a08Fd6b2eeDbBD4D87334',
                               dict(),
                               datetime.datetime(2020, 5, 17),
-                              datetime.datetime.now(), coingeckoid_lookup)
+                              datetime.datetime.now())
