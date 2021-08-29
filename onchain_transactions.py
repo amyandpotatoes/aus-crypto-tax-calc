@@ -1,6 +1,7 @@
 """ create a csv of onchain transaction """
 
 import requests
+import yaml
 import os
 
 import pandas as pd
@@ -13,7 +14,13 @@ from io import StringIO
 # here we just copy the relevant api calls, and edit them slightly to have key in the
 # request's parameters to try to get it to work
 
-def get_transactions(chain_id, address, api_key, block_signed_at_asc=False, no_logs=False):
+def get_api_keys():
+    with open('api_keys.yaml', 'r') as stream:
+        keys = yaml.safe_load(stream)
+    return keys
+
+
+def get_transactions_by_address(chain_id, address, block_signed_at_asc=False, no_logs=False):
     '''
     Retrieve all transactions for address including their decoded log events.
     This endpoint does a deep-crawl of the blockchain to retrieve all kinds
@@ -22,9 +29,35 @@ def get_transactions(chain_id, address, api_key, block_signed_at_asc=False, no_l
 
     method_url = f'/v1/{chain_id}/address/{address}/transactions_v2/'
 
+    api_key = get_api_keys()['covalent']
+
     params = {
         'block-signed-at-asc': block_signed_at_asc,
         'no-logs': no_logs,
+        'format': 'json',
+        'key': api_key,
+        'page-size': 500,
+    }
+
+    result = query(method_url, params)
+
+    return result
+
+
+def get_transaction_by_hash(chain_id, tx_hash):
+    '''
+    Retrieve all transactions for address including their decoded log events.
+    This endpoint does a deep-crawl of the blockchain to retrieve all kinds
+    of transactions that references the address.
+    '''
+
+    method_url = f'/v1/{chain_id}/transaction_v2/{tx_hash}/'
+
+    api_key = get_api_keys()['covalent']
+
+    params = {
+        'block-signed-at-asc': False,
+        'no-logs': False,
         'format': 'json',
         'key': api_key,
         'page-size': 500,
@@ -47,8 +80,10 @@ def query(url, params=None):
 
     response = requests.get(url, params=params)
 
-    if response.json()['data']['pagination']['has_more']:
-        raise(Exception('Too many transactions, increase page size.'))
+    if 'pagination' in response.json()['data'].keys():
+        if response.json()['data']['pagination'] is not None and 'has_more' in response.json()['data']['pagination'].keys():
+            if response.json()['data']['pagination']['has_more']:
+                raise(Exception('Too many transactions, increase page size.'))
 
     params['format'] = 'csv'
 
@@ -59,7 +94,7 @@ def query(url, params=None):
     return result
 
 
-def filter_transactions(result, address):
+def filter_transactions(result):
 
     # read in transactions to pandas dataframe
     df = pd.read_csv(StringIO(result), dtype=str)
@@ -77,16 +112,16 @@ def filter_transactions(result, address):
     return filtered_result
 
 
-def save_transactions(chain, address, api_key):
+def save_transactions(chain, address):
 
     # mapping to translate the chain name into it's value
     chain_ids = {'ethereum': '1', 'polygon': '137', 'bsc': '56', 'fantom': '250'}
 
     # pull all transaction data
-    data_text = get_transactions(chain_ids[chain], address, api_key)
+    data_text = get_transactions_by_address(chain_ids[chain], address)
 
     # filter transaction data to only get necessary lines
-    data_csv = filter_transactions(data_text, address)
+    data_csv = filter_transactions(data_text)
 
     # save the filtered data in the correct transaction-files subdirectory
     filename = os.path.join('transaction-files', chain, 'transactions.csv')
@@ -106,8 +141,7 @@ if __name__ == '__main__':
     parser.add_argument('chain', choices=['ethereum', 'polygon', 'bsc', 'fantom'],
         help='The chain on which to get all ')
     parser.add_argument('address', help='Your wallet address')
-    parser.add_argument('api_key', help='Your covalent api key')
 
     args = parser.parse_args()
 
-    save_transactions(args.chain, args.address, args.api_key)
+    save_transactions(args.chain, args.address)
