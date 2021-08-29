@@ -1,3 +1,8 @@
+# TODO: fix price of 0
+# Estimated price is 1352.3663415203996
+# {'time': Timestamp('2021-07-31 04:26:44'), 'transaction_type': <TransactionType.SELL: 2>, 'token': 'mooBIFI', 'volume': 0.7175910762107052, 'fee': 0.2395296114445323, 'token_price': 0.0, 'token_fee_adjusted_price': 0.2395296114445323}
+# Adding above transaction...
+
 import os
 import pandas as pd
 import glob
@@ -131,6 +136,30 @@ def correct_transaction_classification(class_guess):
     return class_int
 
 
+# Print iterations progress
+def printProgressBar (iteration, total, prefix='', suffix='', decimals=1, length=100, fill='█', printEnd = ''):
+    """
+    Call in a loop to create terminal progress bar
+    @params:
+        iteration   - Required  : current iteration (Int)
+        total       - Required  : total iterations (Int)
+        prefix      - Optional  : prefix string (Str)
+        suffix      - Optional  : suffix string (Str)
+        decimals    - Optional  : positive number of decimals in percent complete (Int)
+        length      - Optional  : character length of bar (Int)
+        fill        - Optional  : bar fill character (Str)
+        printEnd    - Optional  : end character (e.g. "\r", "\r\n") (Str)
+    """
+    # TODO: don't know why this isn't printing as it goes, need to fix
+    percent = ("{0:." + str(decimals) + "f}").format(100 * (iteration / float(total)))
+    filledLength = int(length * iteration // total)
+    bar = fill * filledLength + '-' * (length - filledLength)
+    print(f'\r{prefix} |{bar}| {percent}% {suffix}', end=printEnd)
+    # Print New Line on Complete
+    if iteration == total:
+        print()
+
+
 def get_token_price(token, token_contract_address, transaction_time, chain, currency='aud'):
     """
     Get the price of a token, using either the coingecko API or if that's not available, an average of recent
@@ -157,9 +186,9 @@ def get_token_price(token, token_contract_address, transaction_time, chain, curr
         if token_id is not None:  # if token ID is found
             # check if correct token was found
             if token.lower() not in TICKERS_NO_CONFIRM:
-                correct_token_id = input(f"Is {token_id} the correct token ID for {token.lower()}? (Y/n) ")
+                correct_token_id = input(f"\rIs {token_id} the correct token ID for {token.lower()}? (Y/n) ")
                 if correct_token_id.lower() == 'n':
-                    token_id = input(f"What is the correct coingecko token ID? (Search token in cg and use coin name in URL) ")
+                    token_id = input(f"\rWhat is the correct coingecko token ID? (Search token in cg and use coin name in URL) ")
                     CUSTOM_COINGECKOID_LOOKUP[token.lower()] = token_id
                 else:
                     again = input("Do you want to be asked this again for this ticker? (Y/n) ")
@@ -214,6 +243,8 @@ def get_token_price(token, token_contract_address, transaction_time, chain, curr
 
             # iterate through transaction hashes until 20 appropriate transactions are found and add values to lists
             price_estimates = []
+            printProgressBar(0, 20, prefix='Progress:', suffix='Complete', length=20)
+            progress = 0
             for ind, transaction_hash in enumerate(transaction_hashes):
                 # break once you have 20 transactions
                 if len(price_estimates) >= 20:
@@ -261,6 +292,8 @@ def get_token_price(token, token_contract_address, transaction_time, chain, curr
                     _, _, _, out_values, _, _ = get_moves_and_values_by_direction_excluding(out_moves, transaction_time, chain, currency)
                     price_1token = sum(out_values) / in_moves[0]['quantity']
                     price_estimates.append(price_1token)
+                    progress += 1
+                    printProgressBar(progress, 20, prefix='Progress:', suffix='Complete', length=20)
 
                 # if token is outgoing, get value of incoming token
                 elif any([move['token'] == token for move in out_moves]):
@@ -268,14 +301,16 @@ def get_token_price(token, token_contract_address, transaction_time, chain, curr
                     _, _, in_values, _, _, _ = get_moves_and_values_by_direction_excluding(in_moves, transaction_time, chain, currency)
                     price_1token = sum(in_values) / out_moves[0]['quantity']
                     price_estimates.append(price_1token)
+                    progress += 1
+                    printProgressBar(progress, 20, prefix='Progress:', suffix='Complete', length=20)
 
+            print("")
             if len(price_estimates) < 20:
                 print('Could not find enough transactions to get a price estimate...')
                 token_price = input(f'Enter price per token at {transaction_time} in {currency}manually')
             else:
                 # get average of middle 10 price estimates
                 price_estimates.sort()
-                print(f"All prices found: {price_estimates}")
                 print(f"10 price estimates to average: {price_estimates[6:16]}")
                 average_price = sum(price_estimates[6:16]) / 10
                 print(f"Estimated price is {average_price}")
