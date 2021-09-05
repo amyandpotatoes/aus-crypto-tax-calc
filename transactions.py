@@ -3,20 +3,23 @@
 # {'time': Timestamp('2021-07-31 04:26:44'), 'transaction_type': <TransactionType.SELL: 2>, 'token': 'mooBIFI', 'volume': 0.7175910762107052, 'fee': 0.2395296114445323, 'token_price': 0.0, 'token_fee_adjusted_price': 0.2395296114445323}
 # Adding above transaction...
 
+import onchain_transactions
+
 import os
 import pandas as pd
 import glob
 import datetime
 import requests
 import warnings
-warnings.filterwarnings("ignore")
-
-import onchain_transactions
-
+import pickle
+import glob
+import yaml
+import pprint
 from enum import Enum, auto
-
 from pycoingecko import CoinGeckoAPI
 from io import StringIO
+
+warnings.filterwarnings("ignore")
 
 # DEFINE GLOBALS
 
@@ -77,6 +80,12 @@ class Transaction:
         # token_price is the price for a single token at that time from coingecko
         self.token_price = token_price
         self.token_fee_adjusted_price = token_fee_adjusted_price
+
+    def __str__(self):
+        return str(vars(self))
+
+    def __repr__(self):
+        return str(vars(self))
 
 
 class TransactionType(Enum):
@@ -150,7 +159,6 @@ def printProgressBar (iteration, total, prefix='', suffix='', decimals=1, length
         fill        - Optional  : bar fill character (Str)
         printEnd    - Optional  : end character (e.g. "\r", "\r\n") (Str)
     """
-    # TODO: don't know why this isn't printing as it goes, need to fix
     percent = ("{0:." + str(decimals) + "f}").format(100 * (iteration / float(total)))
     filledLength = int(length * iteration // total)
     bar = fill * filledLength + '-' * (length - filledLength)
@@ -431,7 +439,7 @@ def add_transactions_w_opposite(transaction_bank, self_moves, self_props, self_c
         price_inc_fee_1token = (sum(opp_values) * prop + (gas_fee_fiat / (self_count + opp_count))) / move['quantity']
         temp_transaction = Transaction(transaction_time, transaction_type, move['token'], move['quantity'], (gas_fee_fiat / (self_count + opp_count)), raw_price_1token,
                                        price_inc_fee_1token)
-        print(vars(temp_transaction))
+        print(temp_transaction)
         _ = input('Adding above transaction...')
         if move['token'] in transaction_bank:
             transaction_bank[move['token']].append(temp_transaction)
@@ -618,10 +626,12 @@ def parse_onchain_transactions(chain, wallet, df, transaction_hash, currency='au
 
     # for each incoming token, get details
     for ind in in_indicies:
-        temp_moves.append({'token': transaction_df['log_events_sender_contract_ticker_symbol'][ind],
-                           'token_contract': transaction_df['log_events_sender_address'][ind],
-                           'direction': 'in',
-                           'quantity': int(transaction_df['log_events_decoded_params_value'][ind + 1]) / 1e18})
+        quantity = int(transaction_df['log_events_decoded_params_value'][ind + 1]) / 1e18
+        if quantity > 0:
+            temp_moves.append({'token': transaction_df['log_events_sender_contract_ticker_symbol'][ind],
+                               'token_contract': transaction_df['log_events_sender_address'][ind],
+                               'direction': 'in',
+                               'quantity': quantity})
 
     # get outgoing tokens from token transfers
     out_mask = ((transaction_df['log_events_decoded_signature'] == 'Transfer(indexed address from, indexed address to, uint256 value)')
@@ -632,10 +642,12 @@ def parse_onchain_transactions(chain, wallet, df, transaction_hash, currency='au
 
     # for each outgoing token, get details
     for ind in out_indicies:
-        temp_moves.append({'token': transaction_df['log_events_sender_contract_ticker_symbol'][ind],
-                           'token_contract': transaction_df['log_events_sender_address'][ind],
-                           'direction': 'out',
-                           'quantity': int(transaction_df['log_events_decoded_params_value'][ind + 2]) / 1e18})
+        quantity = int(transaction_df['log_events_decoded_params_value'][ind + 2]) / 1e18
+        if quantity > 0:
+            temp_moves.append({'token': transaction_df['log_events_sender_contract_ticker_symbol'][ind],
+                               'token_contract': transaction_df['log_events_sender_address'][ind],
+                               'direction': 'out',
+                               'quantity': quantity})
 
     # get internal transactions related to hash
     api_key = onchain_transactions.get_api_keys()['bsc']
@@ -663,10 +675,12 @@ def parse_onchain_transactions(chain, wallet, df, transaction_hash, currency='au
     return transaction_time, temp_moves, gas_fee_fiat
 
 
-def read_onchain_transactions(chain, wallet, transaction_bank, start_date, end_date, currency='aud'):
+def read_onchain_transactions(chain, wallet, transaction_bank, processed_transaction_hashes, pickle_file_name, start_date, end_date, currency='aud'):
     """
     Reads in transaction data from an etherscan-based blockchain scanning website and adds transactions to the
     transaction bank.
+    :param pickle_file_name: name of the file used when pickling this session (string)
+    :param processed_transaction_hashes: list of hashes that have already been processed
     :param chain: string of scanning website domain
     :param wallet: string of wallet address
     :param transaction_bank: a dictionary mapping a token to a list of transactions
@@ -693,11 +707,14 @@ def read_onchain_transactions(chain, wallet, transaction_bank, start_date, end_d
     df['block_signed_at'] = pd.to_datetime(df['block_signed_at'], format="%Y-%m-%dT%H:%M:%SZ")
     df = df[(df['block_signed_at'] >= start_date) & (df['block_signed_at'] <= end_date)]
 
-    # get unique transaction hashes
+    # get unique transaction hashes, removing those that have been previously processed
     transaction_hashes = df['tx_hash'].unique()
 
     # iterate through transaction hashes, parsing them and adding transactions to transaction bank
     for transaction_hash in transaction_hashes:
+        if transaction_hash in processed_transaction_hashes:
+            print(f"Skipping transaction {transaction_hash} as it has already been processed...")
+            continue
         # parse transaction token movements into a dictionary 'temp_moves'
         print("-------------------------------------------------------------------------------------------------")
         print(f"Transaction hash: {transaction_hash}")
@@ -711,8 +728,16 @@ def read_onchain_transactions(chain, wallet, transaction_bank, start_date, end_d
         # Use classification to add to transaction bank
         add_transaction_to_transaction_bank(class_int, transaction_bank, temp_moves, in_count, out_count, gas_fee_fiat, transaction_time, chain, currency)
 
+        # mark transaction hash as processed
+        processed_transaction_hashes.append(transaction_hash)
 
-def read_binance_csv(transaction_bank, start_date, end_date):
+        # pickle progress so far
+        filename = os.path.join(os.path.dirname(__file__), "saved-files", f"{pickle_file_name}.p")
+        with open(filename, "wb") as pickle_file:
+            pickle.dump((transaction_bank, processed_transaction_hashes), pickle_file)
+
+
+def read_binance_csv(transaction_bank, processed_transaction_hashes, pickle_file_name, start_date, end_date):
     """
     Reads in a csv file from binance and adds transactions to the transaction bank.
     :param transaction_bank: a dictionary mapping each token to a list of transactions
@@ -735,9 +760,55 @@ def read_binance_csv(transaction_bank, start_date, end_date):
     # base this off the on-chain read function, many of the helper functions can be reused
 
 
+def read_all_transactions():
+    # set up pickling so we can save our progress as we go
+    # look for existing files
+    previous = input(f"Would you like to load in classifications from a previous session? (Y/n) ")
+    if previous.lower() != "n":
+        file_list = glob.glob(os.path.join(os.path.dirname(__file__), "saved-files", "*.p"))
+        if file_list:
+            print("Existing files:")
+            for n, f in enumerate(file_list):
+                print(f"{n+1}. {os.path.basename(f)}")
+            while True:
+                file_num = input(f"Which existing file would you like to load? (#/N) ")
+                if file_num in [str(m) for m in range(1, len(file_list)+1)]:
+                    with open(file_list[int(file_num)-1], "rb") as pickle_file:
+                        (transaction_bank, processed_transaction_hashes) = pickle.load(pickle_file)
+                    print(f"Loaded transaction hashes: {processed_transaction_hashes}")
+                    pp = pprint.PrettyPrinter()
+                    print("Loaded transactions:")
+                    pp.pprint(transaction_bank)
+                    break
+
+
+        else:
+            print("No existing files found, starting from scratch.")
+            transaction_bank = dict()
+            processed_transaction_hashes = []
+    else:
+        transaction_bank = dict()
+        processed_transaction_hashes = []
+
+    pickle_file_name = input(f"What would you like to call this session's save file? ")
+
+    start_date = datetime.datetime.strptime(input(f"Enter the start date: (YYYY-MM-DD) "), "%Y-%m-%d")
+    end_date = datetime.datetime.strptime(input(f"Enter the end date: (YYYY-MM-DD) "), "%Y-%m-%d")
+
+    process_bsc = input(f"Would you like to process Binance Smart Chain transactions? (Y/n) ")
+    if process_bsc.lower() != "n":
+        with open("wallets.yml") as file:
+            wallets = yaml.load(file)
+        for (name, wallet) in wallets.items():
+            wallet_bsc = input(f"Would you like to process transactions for wallet {wallet} ({name}) on BSC? (Y/n) ")
+            if wallet_bsc.lower() != "n":
+                read_onchain_transactions('bsc',
+                                          '0xc3eBf192E1AfF802217a08Fd6b2eeDbBD4D87334',
+                                          transaction_bank,
+                                          processed_transaction_hashes,
+                                          pickle_file_name,
+                                          start_date,
+                                          end_date)
+
 if __name__ == '__main__':
-    read_onchain_transactions('bsc',
-                              '0xc3eBf192E1AfF802217a08Fd6b2eeDbBD4D87334',
-                              dict(),
-                              datetime.datetime(2020, 5, 17),
-                              datetime.datetime.now())
+    read_all_transactions()

@@ -15,7 +15,7 @@ from io import StringIO
 # request's parameters to try to get it to work
 
 def get_api_keys():
-    with open('api_keys.yaml', 'r') as stream:
+    with open('api_keys.yml', 'r') as stream:
         keys = yaml.safe_load(stream)
     return keys
 
