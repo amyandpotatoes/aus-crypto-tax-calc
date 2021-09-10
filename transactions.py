@@ -36,8 +36,9 @@ CLASSIFICATIONS = {1: 'Buy + Sell',
                    4: 'Staking',
                    5: 'Unstaking + Income',
                    6: 'Income',
-                   7: 'Outgoing Taxable',
-                   8: 'Non-taxable'}
+                   7: 'Taxable Loss',
+                   8: 'Taxable Gift',
+                   9: 'Non-taxable'}
 
 # customised token ticker to coingecko ID lookup dictionary
 # used for when the main dictionary doesn't find the correct token, usually due to ticker collisions
@@ -86,6 +87,12 @@ class Transaction:
 
     def __repr__(self):
         return str(vars(self))
+
+    def __lt__(self, other):
+        return self.time < other.time
+
+    def __eq__(self, other):
+        return self.time == other.time
 
 
 class TransactionType(Enum):
@@ -496,8 +503,9 @@ def classify_transaction(temp_moves, currency):
     #                    4: 'Staking',
     #                    5: 'Unstaking + Income',
     #                    6: 'Income',
-    #                    7: 'Outgoing Taxable',
-    #                    8: 'Non-taxable'}
+    #                    7: 'Taxable Loss',
+    #                    8: 'Taxable Gift',
+    #                    9: 'Non-taxable'}
 
     if in_count > 0 and out_count > 0:
         class_guess = 'Buy + Sell'
@@ -592,12 +600,17 @@ def add_transaction_to_transaction_bank(class_int, transaction_bank, temp_moves,
         in_moves, _, in_values, _, in_prop, _ = get_moves_and_values_by_direction(temp_moves, transaction_time, chain, currency)
         # add transactions with incoming tokens (income)
         add_transactions_no_opposite(transaction_bank, in_moves, in_count, in_values, gas_fee_fiat, transaction_time, TransactionType.GAIN, 1)
-    elif class_int == 7:  # outgoing taxable
+    elif class_int == 7:  # taxable loss
         # get values of tokens, used to calculate buy and sell cost bases/prices
         _, out_moves, _, out_values, _, out_prop = get_moves_and_values_by_direction(temp_moves, transaction_time, chain, currency)
-        # add transactions with incoming tokens (income)
+        # add transactions with outgoing tokens (losses)
         add_transactions_no_opposite(transaction_bank, out_moves, out_count, out_values, gas_fee_fiat, transaction_time, TransactionType.LOSS, 1)
-    elif class_int in [4, 8]:
+    elif class_int == 8:  # taxable gift
+        # get values of tokens, used to calculate buy and sell cost bases/prices
+        _, out_moves, _, out_values, _, out_prop = get_moves_and_values_by_direction(temp_moves, transaction_time, chain, currency)
+        # add transactions with outgoing tokens (gifts
+        add_transactions_no_opposite(transaction_bank, out_moves, out_count, out_values, gas_fee_fiat, transaction_time, TransactionType.SELL, 1)
+    elif class_int in [4, 9]:
         _ = input('No taxable transactions...')
 
 
@@ -732,7 +745,7 @@ def read_onchain_transactions(chain, wallet, transaction_bank, processed_transac
         processed_transaction_hashes.append(transaction_hash)
 
         # pickle progress so far
-        filename = os.path.join(os.path.dirname(__file__), "saved-files", f"{pickle_file_name}.p")
+        filename = os.path.join(os.path.dirname(__file__), "results", "transactions", f"{pickle_file_name}.p")
         with open(filename, "wb") as pickle_file:
             pickle.dump((transaction_bank, processed_transaction_hashes), pickle_file)
 
@@ -765,7 +778,7 @@ def read_all_transactions():
     # look for existing files
     previous = input(f"Would you like to load in classifications from a previous session? (Y/n) ")
     if previous.lower() != "n":
-        file_list = glob.glob(os.path.join(os.path.dirname(__file__), "saved-files", "*.p"))
+        file_list = glob.glob(os.path.join(os.path.dirname(__file__), "results", "transactions", "*.p"))
         if file_list:
             print("Existing files:")
             for n, f in enumerate(file_list):
