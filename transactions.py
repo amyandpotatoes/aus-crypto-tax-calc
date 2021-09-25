@@ -1,13 +1,7 @@
-# TODO: fix price of 0
-# Estimated price is 1352.3663415203996
-# {'time': Timestamp('2021-07-31 04:26:44'), 'transaction_type': <TransactionType.SELL: 2>, 'token': 'mooBIFI', 'volume': 0.7175910762107052, 'fee': 0.2395296114445323, 'token_price': 0.0, 'token_fee_adjusted_price': 0.2395296114445323}
-# Adding above transaction...
-
-import onchain_transactions
+from utils import get_user_input, get_api_keys, get_transaction_by_hash, get_transactions_by_address
 
 import os
 import pandas as pd
-import glob
 import datetime
 import requests
 import warnings
@@ -18,8 +12,11 @@ import pprint
 from enum import Enum, auto
 from pycoingecko import CoinGeckoAPI
 from io import StringIO
+from collections import Counter
 
 warnings.filterwarnings("ignore")
+
+# TODO: Fix timezones
 
 # DEFINE GLOBALS
 
@@ -46,6 +43,14 @@ CUSTOM_COINGECKOID_LOOKUP = dict()
 
 # list of tickers not to confirm
 TICKERS_NO_CONFIRM = []
+COINGECKO_NO_CONFIRM = []
+NOCOINGECKO_NO_CONFIRM = []
+
+# dictionary of swap addresses for each token
+SWAP_ADDRESSES = dict()
+
+# dictionary for retrieving previously found prices in token ticker:datetime:price format
+PREVIOUS_PRICES = dict()
 
 
 def create_coingecko_id_lookup():
@@ -56,13 +61,15 @@ def create_coingecko_id_lookup():
     cg = CoinGeckoAPI()
     coin_list = cg.get_coins_list()
     lookup = {}
+    id_list = []
     for coin in coin_list:
         lookup[coin['symbol'].lower()] = coin['id']
-    return lookup
+        id_list.append(coin['id'])
+    return lookup, id_list
 
 
 # create coingecko lookup table
-COINGECKOID_LOOKUP = create_coingecko_id_lookup()
+COINGECKOID_LOOKUP, COINGECKOID_LIST = create_coingecko_id_lookup()
 
 
 class Transaction:
@@ -145,8 +152,7 @@ def correct_transaction_classification(class_guess):
         print(f"{i}. {CLASSIFICATIONS[i]}")
     class_correct = input(f"This looks like {class_guess}, is it? (Y/n): ")
     if class_correct.lower() == 'n':
-        class_int = input("Which is the correct classification number? (#) ")
-        class_int = int(class_int)
+        class_int = get_user_input("Which is the correct classification number? (#) ", 'int')
     else:
         class_int = None
     return class_int
@@ -175,7 +181,33 @@ def printProgressBar (iteration, total, prefix='', suffix='', decimals=1, length
         print()
 
 
-def get_token_price(token, token_contract_address, transaction_time, chain, currency='aud'):
+def store_token_price(token, time, price):
+    if token in PREVIOUS_PRICES:
+        PREVIOUS_PRICES[token][time] = price
+    else:
+        PREVIOUS_PRICES[token] = {time: price}
+
+
+def retrieve_token_price(token, time, verbose=True):
+    prices = []
+    if token in PREVIOUS_PRICES:
+        for prev_time in PREVIOUS_PRICES[token].keys():
+            if time-datetime.timedelta(hours=24) <= prev_time <= time+datetime.timedelta(hours=24):
+                prices.append((abs(time-prev_time), prev_time))
+        if len(prices) == 0:
+            return None
+        else:
+            (_, closest_time) = min(prices)
+        if verbose:
+            print(f"We previously found that the price per token for {token} at {closest_time} was {PREVIOUS_PRICES[token][closest_time]}.")
+            assume = input(f"Would you like to assume the price at {time} was the same? (Y/n) ")
+            if assume.lower() == 'n':
+                return None
+        return PREVIOUS_PRICES[token][prev_time]
+    return None
+
+
+def get_token_price(token, token_contract_address, transaction_time, chain, original_transaction_hash, currency='aud'):
     """
     Get the price of a token, using either the coingecko API or if that's not available, an average of recent
     transactions (with removal of outliers).
@@ -188,153 +220,334 @@ def get_token_price(token, token_contract_address, transaction_time, chain, curr
     """
     if token.lower() == currency.lower():
         return 1
-    else:
-        # convert token ticker to coingecko token ID
-        if token.lower() in CUSTOM_COINGECKOID_LOOKUP.keys():
-            token_id = CUSTOM_COINGECKOID_LOOKUP.get(token.lower())
-        else:
-            token_id = COINGECKOID_LOOKUP.get(token.lower())
 
-        # convert the time to unix time
-        epoch_time = int(transaction_time.timestamp())
+    use_coingecko = 'y'
+    token_id = ""
 
-        if token_id is not None:  # if token ID is found
-            # check if correct token was found
-            if token.lower() not in TICKERS_NO_CONFIRM:
-                correct_token_id = input(f"\rIs {token_id} the correct token ID for {token.lower()}? (Y/n) ")
-                if correct_token_id.lower() == 'n':
-                    token_id = input(f"\rWhat is the correct coingecko token ID? (Search token in cg and use coin name in URL) ")
-                    CUSTOM_COINGECKOID_LOOKUP[token.lower()] = token_id
-                else:
+    # convert the time to unix time
+    epoch_time = int(transaction_time.timestamp())
+
+    while (token_id not in COINGECKOID_LIST) and (use_coingecko.lower() != 'n') and (token.lower() not in NOCOINGECKO_NO_CONFIRM):
+        # check whether coingecko lookup or manual calculation should be used for price
+        if (token.lower() not in COINGECKO_NO_CONFIRM) and (token.lower() not in NOCOINGECKO_NO_CONFIRM):
+            use_coingecko = input(f"\rWould you like to use CoinGecko to determine {token}'s price? "
+                                  f"If not, manual on-chain price calculation will be used, which takes longer. (Y/n) ")
+            if use_coingecko.lower() != 'n':
+                # check if we should assume coingecko should be used in the future
+                again = input("Do you want to be asked this again for this ticker? (Y/n) ")
+                if again.lower() == 'n':
+                    COINGECKO_NO_CONFIRM.append(token.lower())
+            else:
+                # check if we should assume coingecko should not be used in the future
+                again = input("Do you want to be asked this again for this ticker? (Y/n) ")
+                if again.lower() == 'n':
+                    NOCOINGECKO_NO_CONFIRM.append(token.lower())
+                break
+
+        if (use_coingecko.lower() != 'n') and (token.lower() not in NOCOINGECKO_NO_CONFIRM):
+            # convert token ticker to coingecko token ID
+            if token.lower() in CUSTOM_COINGECKOID_LOOKUP.keys():
+                token_id = CUSTOM_COINGECKOID_LOOKUP.get(token.lower())
+            else:
+                token_id = COINGECKOID_LOOKUP.get(token.lower())
+
+            if token_id is not None:  # if token ID is found
+                # check if correct token was found
+                if token.lower() not in TICKERS_NO_CONFIRM:
+                    correct_token_id = input(f"\rIs {token_id} the correct token ID for {token.lower()}? (Y/n) ")
+                    if correct_token_id.lower() == 'n':
+                        token_id = input(f"\rWhat is the correct coingecko token ID? (Search token in cg and use coin name in URL) ")
+                        CUSTOM_COINGECKOID_LOOKUP[token.lower()] = token_id
                     again = input("Do you want to be asked this again for this ticker? (Y/n) ")
                     if again.lower() == 'n':
                         TICKERS_NO_CONFIRM.append(token.lower())
 
-            # convert the time to unix time
-            epoch_time = int(transaction_time.timestamp())
-            twelve_hours = 12 * 60 * 60
-            # query the api +- 12 hours around the time of transaction, then find the closest time
-            from_timestamp = epoch_time - twelve_hours
-            to_timestamp = epoch_time + twelve_hours
+            if token_id not in COINGECKOID_LIST:
+                print(f'Token ID {token_id} is not a valid coingecko ID. Enter a different token ID or opt to use manual on-chain price calculation.')
+                if token.lower() in COINGECKO_NO_CONFIRM:
+                    COINGECKO_NO_CONFIRM.remove(token.lower())
+                if token.lower() in TICKERS_NO_CONFIRM:
+                    TICKERS_NO_CONFIRM.remove(token.lower())
 
-            # query the coingecko api here and extract the relevant data
-            cg = CoinGeckoAPI()
-            result = cg.get_coin_market_chart_range_by_id(
-                id=token_id,
-                vs_currency=currency,
-                from_timestamp=from_timestamp,
-                to_timestamp=to_timestamp
-            )
+    # if checks have passed, use coingecko to find price
+    if (use_coingecko.lower() != 'n') and (token.lower() not in NOCOINGECKO_NO_CONFIRM) and (token_id in COINGECKOID_LIST):
+        twelve_hours = 12 * 60 * 60
+        # query the api +- 12 hours around the time of transaction, then find the closest time
+        from_timestamp = epoch_time - twelve_hours
+        to_timestamp = epoch_time + twelve_hours
 
-            # find the closest time to the time of transaction
-            token_price = None  # just in case the is an error
-            min_time_difference = float('inf')
-            for time, price in result['prices']:
-                time_difference = abs(epoch_time - time)
-                if time_difference < min_time_difference:
-                    min_time_difference = time_difference
-                    token_price = price
-        else:  # if token ID is not found
-            print(f"Token price for {token} was not found using CoinGecko API, estimating from preceding transactions")
+        # query the coingecko api here and extract the relevant data
+        cg = CoinGeckoAPI()
+        result = cg.get_coin_market_chart_range_by_id(
+            id=token_id,
+            vs_currency=currency,
+            from_timestamp=from_timestamp,
+            to_timestamp=to_timestamp
+        )
 
-            # get latest block before provided time
-            api_key = onchain_transactions.get_api_keys()['bsc']
-            block = int(requests.get(f"https://api.bscscan.com/api?module=block&action=getblocknobytime&timestamp={epoch_time}&closest=before&apikey={api_key}").json()['result'])
+        # find the closest time to the time of transaction
+        token_price = None  # just in case the is an error
+        min_time_difference = float('inf')
+        for time, price in result['prices']:
+            time_difference = abs(epoch_time - time)
+            if time_difference < min_time_difference:
+                min_time_difference = time_difference
+                token_price = price
 
-            # get transactions prior to block above
-            result = requests.get(f"https://api.bscscan.com/api?module=account&action=txlist&address={token_contract_address}&startblock=1&endblock={block}&sort=desc&apikey={api_key}").json()['result']
-
-            # get transaction hashes
-            transaction_hashes = [transaction['hash'] for transaction in result]
-
-            # # pull all most recent 20 transactions involving this token
-            # data_text = onchain_transactions.get_transactions(CHAIN_IDS[chain], token_contract_address)
-            #
-            # # filter transaction data to only get necessary lines
-            # df = onchain_transactions.filter_transactions(data_text)
-            #
-            # # get unique transaction hashes
-            # transaction_hashes = df['tx_hash'].unique()
-
-            # iterate through transaction hashes until 20 appropriate transactions are found and add values to lists
-            price_estimates = []
-            printProgressBar(0, 20, prefix='Progress:', suffix='Complete', length=20)
-            progress = 0
-            for ind, transaction_hash in enumerate(transaction_hashes):
-                # break once you have 20 transactions
-                if len(price_estimates) >= 20:
-                    break
-
-                # read information about transaction into df
-                data_text = onchain_transactions.get_transaction_by_hash(CHAIN_IDS[chain], transaction_hash)
-                df = pd.read_csv(StringIO(data_text), dtype=str)
-
-                # parse times
-                df['block_signed_at'] = pd.to_datetime(df['block_signed_at'], format="%Y-%m-%dT%H:%M:%SZ")
-
-                if len(df.index) == 0 or 'log_events_decoded_signature' not in df.columns:
-                    continue
-
-                # get token transfers associated with hash
-                transaction_df = df[(df['tx_hash'] == transaction_hash)
-                                    & (df["log_events_decoded_signature"] == "Transfer(indexed address from, indexed address to, uint256 value)")]
-
-                if len(transaction_df.index) == 0:
-                    continue
-
-                # get wallet that triggered transaction
-                wallet = transaction_df['from_address'].iloc[0]
-
-                # parse transactions into 'moves'
-                transaction_time, moves, gas_fee_fiat = parse_onchain_transactions(chain, wallet, transaction_df, transaction_hash, currency)
-
-                # get moves in each direction
-                in_moves = [move for move in moves if move['direction'] == 'in']
-                out_moves = [move for move in moves if move['direction'] == 'out']
-
-                # only keep going if:
-                # all tokens are in coingeckoid_lookup, this prevents this code from looping
-                # AND there is one incoming and one outgoing token, for simplicity
-                # AND one of those tokens is the token in question
-                if (not all([(move['token'].lower() in COINGECKOID_LOOKUP.keys() or move['token'] == token) for move in moves])
-                        or not (len(in_moves) == 1 and len(out_moves) == 1)
-                        or not any([move['token'] == token for move in moves])):
-                    continue
-
-                # if token is incoming, get value of outoging token
-                if any([move['token'] == token for move in in_moves]):
-                    # get value of opposite token, and use this to calculate price per token
-                    _, _, _, out_values, _, _ = get_moves_and_values_by_direction_excluding(out_moves, transaction_time, chain, currency)
-                    price_1token = sum(out_values) / in_moves[0]['quantity']
-                    price_estimates.append(price_1token)
-                    progress += 1
-                    printProgressBar(progress, 20, prefix='Progress:', suffix='Complete', length=20)
-
-                # if token is outgoing, get value of incoming token
-                elif any([move['token'] == token for move in out_moves]):
-                    # get value of opposite token, and use this to calculate price per token
-                    _, _, in_values, _, _, _ = get_moves_and_values_by_direction_excluding(in_moves, transaction_time, chain, currency)
-                    price_1token = sum(in_values) / out_moves[0]['quantity']
-                    price_estimates.append(price_1token)
-                    progress += 1
-                    printProgressBar(progress, 20, prefix='Progress:', suffix='Complete', length=20)
-
-            print("")
-            if len(price_estimates) < 20:
-                print('Could not find enough transactions to get a price estimate...')
-                token_price = input(f'Enter price per token at {transaction_time} in {currency}manually')
-            else:
-                # get average of middle 10 price estimates
-                price_estimates.sort()
-                print(f"10 price estimates to average: {price_estimates[6:16]}")
-                average_price = sum(price_estimates[6:16]) / 10
-                print(f"Estimated price is {average_price}")
-                token_price = average_price
-
+        store_token_price(token, transaction_time, token_price)
         return token_price
 
+    previous_price = retrieve_token_price(token, transaction_time)
+    if previous_price:
+        return previous_price
 
-def get_moves_and_values_by_direction(moves, transaction_time, chain, currency='aud'):
+    # else use manual price method
+    print(f"Estimating price for {token} from other tokens in transaction...")
+    price_estimate = get_estimated_price_from_transaction(original_transaction_hash, token, chain, currency)
+    if not price_estimate:
+        print(f"Could not estimate price from other tokens, trying other methods...")
+    else:
+        print(f"Estimated price per token of {token} is {price_estimate} {currency.upper()}.")
+        use_price = input(f"Are you confident this is the correct price? "
+                          f"If not, further price estimation will be used and you can manually enter a price if they are not successful. (y/N) ")
+        if use_price.lower() == "y":
+            store_token_price(token, transaction_time, price_estimate)
+            return price_estimate
+
+    print(f"Estimating price for {token} from preceding transactions...")
+    print("Trying method 1...")
+
+    # get latest block before provided time
+    api_key = get_api_keys()['bsc']
+    block = int(requests.get(f"https://api.bscscan.com/api?module=block&action=getblocknobytime&timestamp={epoch_time}&closest=before&apikey={api_key}").json()['result'])
+
+    # get transactions prior to block above
+    result = requests.get(f"https://api.bscscan.com/api?module=account&action=txlist&address={token_contract_address}&startblock=1&endblock={block}&sort=desc&apikey={api_key}").json()['result']
+
+    # get transaction hashes for non-approval transactions
+    transaction_hashes = [transaction['hash'] for transaction in result if transaction['input'][:10] != '0x095ea7b3']
+
+    # iterate through transaction hashes until 10 appropriate transactions are found and add values to lists
+    price_estimates = []
+    printProgressBar(0, 10, prefix='Price estimates found:', suffix='Complete', length=10)
+    progress = 0
+    for ind, transaction_hash in enumerate(transaction_hashes):
+        # break once you have 10 transactions
+        if len(price_estimates) >= 10:
+            break
+
+        # get price from transaction
+        price_estimate = get_estimated_price_from_transaction(transaction_hash, token, chain, currency)
+
+        if price_estimate:
+            price_estimates.append(price_estimate)
+            progress += 1
+            printProgressBar(progress, 10, prefix='Price estimates found:', suffix='Complete', length=10)
+
+    print("")
+    if len(price_estimates) >= 10:
+        # get average of middle 6 price estimates
+        price_estimates.sort()
+        print(f"6 price estimates to average: {price_estimates[2:8]}")
+        average_price = sum(price_estimates[2:8]) / 6
+        print(f"Estimated price is {average_price}")
+        token_price = average_price
+        store_token_price(token, transaction_time, token_price)
+        return token_price
+
+    print("Trying method 2...")
+    # look at recent (current day) transactions to find the addresses most commonly involved in swaps of that token
+    swap_addresses = find_common_swap_addresses(token, token_contract_address, chain, currency)
+    print(swap_addresses)
+
+    for page in range(1, 11):
+        if page > 1:
+            keep_looking = input(f"Only {len(price_estimates)}/10 price estimates found so far, continue looking? If not you can manually enter the price. (Y/n) ")
+            if keep_looking.lower() == 'n':
+                break
+        for swap_address in swap_addresses:
+            # get transactions prior to block above for each of the swap addresses
+            # TODO: try tokentx
+            result = \
+            requests.get(f"https://api.bscscan.com/api?module=account&action=txlist&address={swap_address}&startblock=1&endblock={block}&page={page}&offset=10000&sort=desc&apikey={api_key}").json()[
+                'result']
+
+            if not result:
+                continue
+
+            # get transaction hashes for non-approval transactions
+            print("Finding relevant transaction hashes")
+            transaction_hashes = []
+            for transaction in result:
+                if transaction['input'][:10] != '0x095ea7b3':
+                    if token_contract_address.lower()[2:] in transaction['input'][2:]:
+                        transaction_hashes.append(transaction['hash'])
+            print(f"Found {len(transaction_hashes)} relevant transaction hashes out of {len(result)} total")
+
+            if len(transaction_hashes) == 0:
+                continue
+
+            # iterate through transaction hashes until 10 appropriate transactions are found and add values to lists
+            price_estimates = []
+            printProgressBar(0, 10, prefix='Price estimates found:', suffix='Complete', length=10)
+            progress = 0
+            for ind, transaction_hash in enumerate(transaction_hashes):
+                # break once you have 10 transactions
+                if len(price_estimates) >= 10:
+                    break
+
+                # get price from transaction
+                price_estimate = get_estimated_price_from_transaction(transaction_hash, token, chain, currency)
+
+                if price_estimate:
+                    price_estimates.append(price_estimate)
+                    progress += 1
+                    printProgressBar(progress, 10, prefix='Price estimates found:', suffix='Complete', length=10)
+
+            print("")
+
+        if len(price_estimates) >= 10:
+            # get average of middle 10 price estimates
+            price_estimates.sort()
+            print(f"6 price estimates to average: {price_estimates[2:8]}")
+            average_price = sum(price_estimates[2:8]) / 6
+            print(f"Estimated price is {average_price}")
+            token_price = average_price
+            store_token_price(token, transaction_time, token_price)
+            return token_price
+
+    print('Could not find enough transactions to get an accurate price estimate...')
+    if len(price_estimates) > 0:
+        print(f"Price estimates found: {price_estimates}")
+    token_price = get_user_input(f'Enter price per token at {transaction_time} in {currency} manually: ', 'float')
+    store_token_price(token, transaction_time, token_price)
+    return token_price
+
+
+def get_estimated_price_from_transaction(transaction_hash, token, chain, currency):
+    # read information about transaction into df
+    data_text = get_transaction_by_hash(CHAIN_IDS[chain], transaction_hash)
+    try:
+        df = pd.read_csv(StringIO(data_text), dtype=str)
+    except pd.errors.ParserError:
+        return None
+
+    if (len(df.index) == 0) or 'log_events_decoded_signature' not in df.columns or 'log_events_decoded_signature' not in df.columns:
+        return None
+
+    # parse times
+    df['block_signed_at'] = pd.to_datetime(df['block_signed_at'], format="%Y-%m-%dT%H:%M:%SZ")
+
+    # get token transfers associated with hash
+    transaction_df = df[(df['tx_hash'] == transaction_hash)
+                        & (df["log_events_decoded_signature"] == "Transfer(indexed address from, indexed address to, uint256 value)")]
+
+    if len(transaction_df.index) == 0:
+        return None
+
+    # get wallet that triggered transaction
+    wallet = transaction_df['from_address'].iloc[0]
+
+    # parse transactions into 'moves'
+    transaction_time, moves, gas_fee_fiat = parse_onchain_transactions(chain, wallet, transaction_df, transaction_hash, currency, True)
+
+    # get moves in each direction
+    in_moves = [move for move in moves if move['direction'] == 'in']
+    out_moves = [move for move in moves if move['direction'] == 'out']
+
+    # only keep going if:
+    # all tokens are in coingeckoid_lookup, this prevents this code from looping
+    # AND there is one incoming and one outgoing token, for simplicity
+    # AND one of those tokens is the token in question
+    retrieved_price = retrieve_token_price(token, transaction_time)
+    if (not all([(move['token'].lower() in COINGECKOID_LOOKUP.keys()
+                  or move['token'] == token)
+                  or retrieve_token_price(move['token'], transaction_time, verbose=False)
+                 for move in moves])
+            or not (len(in_moves) == 1 and len(out_moves) == 1)
+            or not any([move['token'] == token for move in moves])):
+        return None
+
+    # if token is incoming, get value of outoging token
+    if any([move['token'].lower() == token.lower() for move in in_moves]):
+        # get value of opposite token, and use this to calculate price per token
+        _, _, _, out_values = get_moves_and_values_by_direction_excluding(out_moves, transaction_time, chain, token, transaction_hash, currency)
+        price_1token = sum(out_values) / in_moves[0]['quantity']
+        return price_1token
+
+    # if token is outgoing, get value of incoming token
+    elif any([move['token'].lower() == token.lower() for move in out_moves]):
+        # get value of opposite token, and use this to calculate price per token
+        _, _, in_values, _ = get_moves_and_values_by_direction_excluding(in_moves, transaction_time, chain, token, transaction_hash, currency)
+        price_1token = sum(in_values) / out_moves[0]['quantity']
+        return price_1token
+
+
+def find_common_swap_addresses(token, token_address, chain, currency):
+
+    if token.lower() in SWAP_ADDRESSES.keys():
+        return SWAP_ADDRESSES[token.lower()]
+
+    # read information about transaction into df
+    data_text = get_transactions_by_address(CHAIN_IDS[chain], token_address, page_size=2500)
+
+    if not data_text:
+        return []
+
+    df = pd.read_csv(StringIO(data_text), dtype=str)
+
+    if len(df.index) == 0 or 'log_events_decoded_signature' not in df.columns:
+        return []
+
+    # parse times
+    df['block_signed_at'] = pd.to_datetime(df['block_signed_at'], format="%Y-%m-%dT%H:%M:%SZ")
+
+    # get token transfers only
+    transaction_df = df[(df["log_events_decoded_signature"] == "Transfer(indexed address from, indexed address to, uint256 value)")]
+
+    # get only transactions that actually involve the token
+    sub_df = transaction_df[(transaction_df["log_events_sender_address"].str.lower() == token_address.lower())]
+
+    # get transactions for which the token is either going to or coming from the invoker
+    sub_df = sub_df[(sub_df["from_address"].str.lower() == sub_df["log_events_decoded_params_value"].str.lower())]
+
+    if len(transaction_df.index) == 0:
+        return []
+
+    # get unique transaction hashes from sub_df
+    transaction_hashes = sub_df['tx_hash'].unique()
+
+    swap_addresses = []
+
+    print("Finding swap addresses...")
+    for ind, transaction_hash in enumerate(transaction_hashes):
+        if len(swap_addresses) > 100:
+            break
+        if ind % 10 == 0:
+            print(f"{ind}/{min(100, len(transaction_hashes))}")
+
+        # get wallet that triggered transaction
+        wallet = transaction_df[transaction_df['tx_hash'] == transaction_hash]['from_address'].iloc[0]
+
+        # parse transactions into 'moves'
+        transaction_time, moves, gas_fee_fiat = parse_onchain_transactions(chain, wallet, transaction_df, transaction_hash, currency, True)
+
+        # only use transactions that have at least one token going in and one token going out
+        if (len([move for move in moves if move['direction'] == 'in']) > 0) and len([move for move in moves if move['direction'] == 'out']) > 0:
+            # get the associated addresses
+            swap_addresses.append(wallet)
+            swap_addresses.append(transaction_df[transaction_df['tx_hash'] == transaction_hash]['to_address'].iloc[0])
+
+    counter = Counter(swap_addresses)
+
+    top = set([address for address in swap_addresses if counter[address] >= 3])
+
+    SWAP_ADDRESSES[token.lower()] = top
+
+    return top
+
+
+def get_moves_and_values_by_direction(moves, transaction_time, chain, transaction_hash, currency='aud'):
     """
     Given a list of moves (movements of tokens in our out of wallet), splits the moves based on direction (whether they
     are incoming or outgoing) and calculates the total values of each token within the transaction, and the proportion
@@ -361,12 +574,12 @@ def get_moves_and_values_by_direction(moves, transaction_time, chain, currency='
     in_values = []
     out_values = []
     for move in in_moves:
-        price_1token = get_token_price(move['token'], move['token_contract'], transaction_time, chain, currency)
+        price_1token = get_token_price(move['token'], move['token_contract'], transaction_time, chain, transaction_hash, currency)
         price_total = price_1token * move['quantity']
         in_values.append(price_total)
 
     for move in out_moves:
-        price_1token = get_token_price(move['token'], move['token_contract'], transaction_time, chain, currency)
+        price_1token = get_token_price(move['token'], move['token_contract'], transaction_time, chain, transaction_hash, currency)
         price_total = price_1token * move['quantity']
         out_values.append(price_total)
 
@@ -377,7 +590,7 @@ def get_moves_and_values_by_direction(moves, transaction_time, chain, currency='
     return in_moves, out_moves, in_values, out_values, in_prop, out_prop
 
 
-def get_moves_and_values_by_direction_excluding(moves, transaction_time, chain, exclude, currency='aud'):
+def get_moves_and_values_by_direction_excluding(moves, transaction_time, chain, exclude, transaction_hash, currency='aud'):
     """
     Given a list of moves (movements of tokens in our out of wallet), splits the moves based on direction (whether they
     are incoming or outgoing) and calculates the total values of each token within the transaction, and the proportion
@@ -400,27 +613,27 @@ def get_moves_and_values_by_direction_excluding(moves, transaction_time, chain, 
     direction that each different token represents
     """
     # split tokens into incoming and outgoing
-    in_moves = [move for move in moves if move['direction'] == 'in']
-    out_moves = [move for move in moves if move['direction'] == 'out']
+    in_moves = [move for move in moves if (move['direction'] == 'in' and move['token'].lower() != exclude.lower())]
+    out_moves = [move for move in moves if (move['direction'] == 'out' and move['token'].lower() != exclude.lower())]
 
     # calculate values
     in_values = []
     out_values = []
     for move in in_moves:
-        price_1token = get_token_price(move['token'], move['token_contract'], transaction_time, chain, currency)
+        price_1token = get_token_price(move['token'], move['token_contract'], transaction_time, chain, transaction_hash, currency)
         price_total = price_1token * move['quantity']
         in_values.append(price_total)
 
     for move in out_moves:
-        price_1token = get_token_price(move['token'], move['token_contract'], transaction_time, chain, currency)
+        price_1token = get_token_price(move['token'], move['token_contract'], transaction_time, chain, transaction_hash, currency)
         price_total = price_1token * move['quantity']
         out_values.append(price_total)
 
-    # calculate proportional values, so that if there are multiple ingoing tokens you can work out how much of the outgoing value each is 'swapped for'
-    in_prop = [val / sum(in_values) for val in in_values]
-    out_prop = [val / sum(out_values) for val in out_values]
+    # # calculate proportional values, so that if there are multiple ingoing tokens you can work out how much of the outgoing value each is 'swapped for'
+    # in_prop = [val / sum(in_values) for val in in_values]
+    # out_prop = [val / sum(out_values) for val in out_values]
 
-    return in_moves, out_moves, in_values, out_values, in_prop, out_prop
+    return in_moves, out_moves, in_values, out_values
 
 
 def add_transactions_w_opposite(transaction_bank, self_moves, self_props, self_count, opp_values, opp_count, gas_fee_fiat, transaction_time, transaction_type):
@@ -447,7 +660,7 @@ def add_transactions_w_opposite(transaction_bank, self_moves, self_props, self_c
         temp_transaction = Transaction(transaction_time, transaction_type, move['token'], move['quantity'], (gas_fee_fiat / (self_count + opp_count)), raw_price_1token,
                                        price_inc_fee_1token)
         print(temp_transaction)
-        _ = input('Adding above transaction...')
+        _ = input('Adding above transaction... (Press enter to continue)')
         if move['token'] in transaction_bank:
             transaction_bank[move['token']].append(temp_transaction)
         else:
@@ -476,7 +689,7 @@ def add_transactions_no_opposite(transaction_bank, self_moves, self_count, self_
         temp_transaction = Transaction(transaction_time, transaction_type, move['token'], move['quantity'] * taxable_prop, gas_fee_fiat / self_count, raw_price_1token,
                                        price_inc_fee_1token)
         print(vars(temp_transaction))
-        _ = input('Adding above transaction...')
+        _ = input('Adding above transaction... (Press enter to continue)')
         if move['token'] in transaction_bank:
             transaction_bank[move['token']].append(temp_transaction)
         else:
@@ -490,9 +703,6 @@ def classify_transaction(temp_moves, currency):
     :param currency: string, name of currency used (usually 'aud')
     :return: class_int, the classification as an integer, in_count, the number of different incoming tokens, out_count, the number of different outgoing tokens
     """
-    print("Token movements: ")
-    for move in temp_moves:
-        print(move)
 
     in_count = len([True for move in temp_moves if move['direction'] == 'in'])
     out_count = len([True for move in temp_moves if move['direction'] == 'out'])
@@ -541,7 +751,7 @@ def classify_transaction(temp_moves, currency):
     return class_int, in_count, out_count
 
 
-def add_transaction_to_transaction_bank(class_int, transaction_bank, temp_moves, in_count, out_count, gas_fee_fiat, transaction_time, chain, currency):
+def add_transaction_to_transaction_bank(class_int, transaction_bank, temp_moves, in_count, out_count, gas_fee_fiat, transaction_time, chain, transaction_hash, currency):
     """
     Gets the fiat values of the tokens in the transaction and adds transaction to transaction bank, using on the
     transaction classification provided in class_int to determine that TransactionType and other details.
@@ -559,19 +769,19 @@ def add_transaction_to_transaction_bank(class_int, transaction_bank, temp_moves,
     """
     if class_int == 1:  # Buy + Sell
         # get values of tokens, used to calculate buy and sell cost bases/prices
-        in_moves, out_moves, in_values, out_values, in_prop, out_prop = get_moves_and_values_by_direction(temp_moves, transaction_time, chain, currency)
+        in_moves, out_moves, in_values, out_values, in_prop, out_prop = get_moves_and_values_by_direction(temp_moves, transaction_time, chain, transaction_hash, currency)
         # add transactions with incoming tokens (buys)
         add_transactions_w_opposite(transaction_bank, in_moves, in_prop, in_count, out_values, out_count, gas_fee_fiat, transaction_time, TransactionType.BUY)
         # then add transactions with outgoing tokens (sells)
         add_transactions_w_opposite(transaction_bank, out_moves, out_prop, out_count, in_values, in_count, gas_fee_fiat, transaction_time, TransactionType.SELL)
     elif class_int == 2:  # Buy
         # get values of tokens, used to calculate buy and sell cost bases/prices
-        in_moves, out_moves, in_values, out_values, in_prop, out_prop = get_moves_and_values_by_direction(temp_moves, transaction_time, chain, currency)
+        in_moves, out_moves, in_values, out_values, in_prop, out_prop = get_moves_and_values_by_direction(temp_moves, transaction_time, chain, transaction_hash, currency)
         # add transactions with incoming tokens (buys)
         add_transactions_w_opposite(transaction_bank, in_moves, in_prop, in_count, out_values, out_count, gas_fee_fiat, transaction_time, TransactionType.BUY)
     elif class_int == 3:  # Sell
         # get values of tokens, used to calculate buy and sell cost bases/prices
-        in_moves, out_moves, in_values, out_values, in_prop, out_prop = get_moves_and_values_by_direction(temp_moves, transaction_time, chain, currency)
+        in_moves, out_moves, in_values, out_values, in_prop, out_prop = get_moves_and_values_by_direction(temp_moves, transaction_time, chain, transaction_hash, currency)
         # then add transactions with outgoing tokens (sells)
         add_transactions_w_opposite(transaction_bank, out_moves, out_prop, out_count, in_values, in_count, gas_fee_fiat, transaction_time, TransactionType.SELL)
     elif class_int == 5:  # Unstaking + Income
@@ -581,15 +791,15 @@ def add_transaction_to_transaction_bank(class_int, transaction_bank, temp_moves,
             if income.lower() == "y":
                 all_income = input("Are ALL of these tokens income? (Y/n) ")
                 if all_income.lower() == "n":
-                    income_amount = int(input("How many units are income?"))
+                    income_amount = get_user_input("How many units are income?", 'float')
                     income_prop = income_amount / move['quantity']
                     # get values of tokens, used to calculate buy and sell cost bases/prices
-                    in_moves, _, in_values, _, in_prop, _ = get_moves_and_values_by_direction([move], transaction_time, chain, currency)
+                    in_moves, _, in_values, _, in_prop, _ = get_moves_and_values_by_direction([move], transaction_time, chain, transaction_hash, currency)
                     # add transactions
                     add_transactions_no_opposite(transaction_bank, in_moves, in_count, in_values, gas_fee_fiat, transaction_time, TransactionType.GAIN, income_prop)
                 else:
                     # get values of tokens, used to calculate buy and sell cost bases/prices
-                    in_moves, _, in_values, _, in_prop, _ = get_moves_and_values_by_direction([move], transaction_time, chain, currency)
+                    in_moves, _, in_values, _, in_prop, _ = get_moves_and_values_by_direction([move], transaction_time, chain, transaction_hash, currency)
                     # add transactions
                     add_transactions_no_opposite(transaction_bank, in_moves, in_count, in_values, gas_fee_fiat, transaction_time, TransactionType.GAIN, 1)
             else:
@@ -597,39 +807,37 @@ def add_transaction_to_transaction_bank(class_int, transaction_bank, temp_moves,
 
     elif class_int == 6:  # income
         # get values of tokens, used to calculate buy and sell cost bases/prices
-        in_moves, _, in_values, _, in_prop, _ = get_moves_and_values_by_direction(temp_moves, transaction_time, chain, currency)
+        in_moves, _, in_values, _, in_prop, _ = get_moves_and_values_by_direction(temp_moves, transaction_time, chain, transaction_hash, currency)
         # add transactions with incoming tokens (income)
         add_transactions_no_opposite(transaction_bank, in_moves, in_count, in_values, gas_fee_fiat, transaction_time, TransactionType.GAIN, 1)
     elif class_int == 7:  # taxable loss
         # get values of tokens, used to calculate buy and sell cost bases/prices
-        _, out_moves, _, out_values, _, out_prop = get_moves_and_values_by_direction(temp_moves, transaction_time, chain, currency)
+        _, out_moves, _, out_values, _, out_prop = get_moves_and_values_by_direction(temp_moves, transaction_time, chain, transaction_hash, currency)
         # add transactions with outgoing tokens (losses)
         add_transactions_no_opposite(transaction_bank, out_moves, out_count, out_values, gas_fee_fiat, transaction_time, TransactionType.LOSS, 1)
     elif class_int == 8:  # taxable gift
         # get values of tokens, used to calculate buy and sell cost bases/prices
-        _, out_moves, _, out_values, _, out_prop = get_moves_and_values_by_direction(temp_moves, transaction_time, chain, currency)
+        _, out_moves, _, out_values, _, out_prop = get_moves_and_values_by_direction(temp_moves, transaction_time, chain,transaction_hash,  currency)
         # add transactions with outgoing tokens (gifts
         add_transactions_no_opposite(transaction_bank, out_moves, out_count, out_values, gas_fee_fiat, transaction_time, TransactionType.SELL, 1)
     elif class_int in [4, 9]:
-        _ = input('No taxable transactions...')
+        _ = input('No taxable transactions... (Press enter to continue)')
 
 
-def parse_onchain_transactions(chain, wallet, df, transaction_hash, currency='aud'):
+def parse_onchain_transactions(chain, wallet, df, transaction_hash, currency='aud', checking_price=False):
     # setup object to store intermediate information about ingoing and outgoing tokens
     temp_moves = []
 
     # get token transfers associated with hash
     transaction_df = df[(df['tx_hash'] == transaction_hash)
                         & (df["log_events_decoded_signature"] == "Transfer(indexed address from, indexed address to, uint256 value)")]
-    transaction_time = df['block_signed_at'].iloc[0]
-    pd.set_option('display.max_columns', None)
-    transaction_df['gas_spent'] = pd.to_numeric(transaction_df['gas_spent'], errors='coerce')
-    transaction_df['gas_price'] = pd.to_numeric(transaction_df['gas_price'], errors='coerce')
+    transaction_time = transaction_df['block_signed_at'].iloc[0]
 
     # get gas fee from transaction
+    transaction_df['gas_spent'] = pd.to_numeric(transaction_df['gas_spent'], errors='coerce')
+    transaction_df['gas_price'] = pd.to_numeric(transaction_df['gas_price'], errors='coerce')
     gas_fee_native_token = max(transaction_df['gas_spent'] * transaction_df['gas_price'] / 1e18)
-    gas_fee_fiat = gas_fee_native_token * get_token_price(NATIVE_TOKEN[chain], None, transaction_time, chain, currency)
-    # print(f"Gas fee: {gas_fee_native_token} {NATIVE_TOKEN[chain]} = {gas_fee_fiat} {currency.upper()}")
+    gas_fee_fiat = gas_fee_native_token * get_token_price(NATIVE_TOKEN[chain], None, transaction_time, chain, transaction_hash, currency)
 
     # get incoming tokens from token transfers
     in_mask = (transaction_df['log_events_decoded_signature'] == 'Transfer(indexed address from, indexed address to, uint256 value)') \
@@ -663,7 +871,7 @@ def parse_onchain_transactions(chain, wallet, df, transaction_hash, currency='au
                                'quantity': quantity})
 
     # get internal transactions related to hash
-    api_key = onchain_transactions.get_api_keys()['bsc']
+    api_key = get_api_keys()['bsc']
     response = requests.get(f"https://api.bscscan.com/api?module=account&action=txlistinternal&txhash={transaction_hash}&apikey={api_key}")
 
     result = response.json()['result']
@@ -685,6 +893,65 @@ def parse_onchain_transactions(chain, wallet, df, transaction_hash, currency='au
                                'direction': 'out',
                                'quantity': int(internal_transaction['value']) / 1e18})
 
+    # for some reason pancakeswap or similar swaps of a token for the native token don't show the native token movement as a normal transaction OR an internal transaction :(
+    # catch these here
+
+    # get swaps associated with hash
+    swap_df = df[(df['tx_hash'] == transaction_hash)
+                        & (df["log_events_decoded_signature"] ==
+                           "Swap(indexed address sender, uint256 amount0In, uint256 amount1In, uint256 amount0Out, uint256 amount1Out, indexed address to)")]
+
+    # get moves in each direction
+    in_moves = [move for move in temp_moves if move['direction'] == 'in']
+    out_moves = [move for move in temp_moves if move['direction'] == 'out']
+
+    # check where wallet is
+    # check whether wallet is giver of native token (recipient of normal token)
+    mask = (swap_df['log_events_decoded_params_name'] == 'to')
+    is_native_sender = (swap_df['log_events_decoded_params_value'][mask].str.lower() == wallet.lower()).all()
+    mask = (swap_df['log_events_decoded_params_name'] == 'sender')
+    is_native_recipient = (swap_df['log_events_decoded_params_value'][mask].str.lower() == wallet.lower()).all()
+
+    # catch those where native token out, something else in
+    if len(swap_df) > 0 and len(in_moves) == 1 and len(out_moves) == 0 and is_native_sender:
+        mask = (swap_df['log_events_decoded_params_name'] == 'amount1In')
+        volume = swap_df['log_events_decoded_params_value'][mask]
+        temp_moves.append({'token': NATIVE_TOKEN[chain],
+                           'token_contract': None,
+                           'direction': 'out',
+                           'quantity': int(volume) / 1e18})
+
+    # catch those where something else out, native token in
+    if len(swap_df) > 0 and len(in_moves) == 0 and len(out_moves) == 1 and is_native_recipient:
+        mask = (swap_df['log_events_decoded_params_name'] == 'amount0Out')
+        volume = swap_df['log_events_decoded_params_value'][mask]
+        temp_moves.append({'token': NATIVE_TOKEN[chain],
+                           'token_contract': None,
+                           'direction': 'in',
+                           'quantity': int(volume) / 1e18})
+
+    changes = 'y'
+    while changes.lower() == 'y' and not checking_price:
+        print("Token movements: ")
+        for n, move in enumerate(temp_moves):
+            print(f"{n + 1}. {move}")
+        changes = input("Would you like to make any changes? (y/N) ")
+        if changes.lower() == 'y':
+            print("Options: \n1. Remove a transaction \n2. Add a transaction")
+            option = input(f"Select an option: (#/N) ")
+            if option.strip() == '1':
+                remove = input("Which transaction would you like to remove? (#/N) ")
+                if remove in [str(m) for m in range(1, len(temp_moves)+1)]:
+                    del temp_moves[int(remove)-1]
+            elif option.strip() == '2':
+                ticker = input("Enter token ticker: ")
+                token_contract = input("Enter token contract address: ")
+                direction = get_user_input("Enter token movement direction: (in/out) ", 'direction')
+                quantity = get_user_input("Enter quantity: (#) ", 'float')
+                temp_moves.append({'token': ticker,
+                                   'token_contract': token_contract,
+                                   'direction': direction,
+                                   'quantity': quantity})
     return transaction_time, temp_moves, gas_fee_fiat
 
 
@@ -719,27 +986,35 @@ def read_onchain_transactions(chain, wallet, transaction_bank, processed_transac
     # get only transactions within date range
     df['block_signed_at'] = pd.to_datetime(df['block_signed_at'], format="%Y-%m-%dT%H:%M:%SZ")
     df = df[(df['block_signed_at'] >= start_date) & (df['block_signed_at'] <= end_date)]
+    df.sort_values(by='block_signed_at', inplace=True)
+
+    # fix types
+    df['gas_spent'] = pd.to_numeric(df['gas_spent'], errors='coerce')
+    df['gas_price'] = pd.to_numeric(df['gas_price'], errors='coerce')
 
     # get unique transaction hashes, removing those that have been previously processed
-    transaction_hashes = df['tx_hash'].unique()
+    transaction_hashes = list(dict.fromkeys(df['tx_hash']))
 
     # iterate through transaction hashes, parsing them and adding transactions to transaction bank
     for transaction_hash in transaction_hashes:
         if transaction_hash in processed_transaction_hashes:
-            print(f"Skipping transaction {transaction_hash} as it has already been processed...")
+            continue
+        transaction_df = df[(df['tx_hash'] == transaction_hash)
+                            & (df["log_events_decoded_signature"] == "Transfer(indexed address from, indexed address to, uint256 value)")]
+        if len(transaction_df) == 0:
             continue
         # parse transaction token movements into a dictionary 'temp_moves'
         print("-------------------------------------------------------------------------------------------------")
         print(f"Transaction hash: {transaction_hash}")
-        transaction_time = df['block_signed_at'].iloc[0]
-        print(f"Time: {transaction_time}")
+        transaction_time = transaction_df['block_signed_at'].iloc[0]
+        print(f"Transaction time: {transaction_time}")
         transaction_time, temp_moves, gas_fee_fiat = parse_onchain_transactions(chain, wallet, df, transaction_hash, currency)
 
         # attempt to classify and check with user
         class_int, in_count, out_count = classify_transaction(temp_moves, currency)
 
         # Use classification to add to transaction bank
-        add_transaction_to_transaction_bank(class_int, transaction_bank, temp_moves, in_count, out_count, gas_fee_fiat, transaction_time, chain, currency)
+        add_transaction_to_transaction_bank(class_int, transaction_bank, temp_moves, in_count, out_count, gas_fee_fiat, transaction_time, chain, transaction_hash, currency)
 
         # mark transaction hash as processed
         processed_transaction_hashes.append(transaction_hash)
@@ -747,7 +1022,8 @@ def read_onchain_transactions(chain, wallet, transaction_bank, processed_transac
         # pickle progress so far
         filename = os.path.join(os.path.dirname(__file__), "results", "transactions", f"{pickle_file_name}.p")
         with open(filename, "wb") as pickle_file:
-            pickle.dump((transaction_bank, processed_transaction_hashes), pickle_file)
+            pickle.dump((transaction_bank, processed_transaction_hashes, PREVIOUS_PRICES), pickle_file)
+        print(f"Progress saved to {filename}")
 
 
 def read_binance_csv(transaction_bank, processed_transaction_hashes, pickle_file_name, start_date, end_date):
@@ -784,17 +1060,23 @@ def read_all_transactions():
             for n, f in enumerate(file_list):
                 print(f"{n+1}. {os.path.basename(f)}")
             while True:
-                file_num = input(f"Which existing file would you like to load? (#/N) ")
+                file_num = input(f"Which existing file would you like to load? (#/n) ")
                 if file_num in [str(m) for m in range(1, len(file_list)+1)]:
                     with open(file_list[int(file_num)-1], "rb") as pickle_file:
-                        (transaction_bank, processed_transaction_hashes) = pickle.load(pickle_file)
+                        global PREVIOUS_PRICES
+                        (transaction_bank, processed_transaction_hashes, PREVIOUS_PRICES) = pickle.load(pickle_file)
                     print(f"Loaded transaction hashes: {processed_transaction_hashes}")
                     pp = pprint.PrettyPrinter()
                     print("Loaded transactions:")
                     pp.pprint(transaction_bank)
+                    print(f"Loaded previous prices:")
+                    pp.pprint(PREVIOUS_PRICES)
                     break
-
-
+                elif file_num.lower() == 'n':
+                    print('No file selected, starting from scratch.')
+                    transaction_bank = dict()
+                    processed_transaction_hashes = []
+                    break
         else:
             print("No existing files found, starting from scratch.")
             transaction_bank = dict()
@@ -805,23 +1087,25 @@ def read_all_transactions():
 
     pickle_file_name = input(f"What would you like to call this session's save file? ")
 
-    start_date = datetime.datetime.strptime(input(f"Enter the start date: (YYYY-MM-DD) "), "%Y-%m-%d")
-    end_date = datetime.datetime.strptime(input(f"Enter the end date: (YYYY-MM-DD) "), "%Y-%m-%d")
+    print("What time period would you like to process transactions for?")
+    start_date = get_user_input(f"Enter the start date: (YYYY-MM-DD) ", 'date')
+    end_date = get_user_input(f"Enter the end date: (YYYY-MM-DD) ", 'date')
 
-    process_bsc = input(f"Would you like to process Binance Smart Chain transactions? (Y/n) ")
-    if process_bsc.lower() != "n":
-        with open("wallets.yml") as file:
-            wallets = yaml.load(file)
-        for (name, wallet) in wallets.items():
-            wallet_bsc = input(f"Would you like to process transactions for wallet {wallet} ({name}) on BSC? (Y/n) ")
-            if wallet_bsc.lower() != "n":
-                read_onchain_transactions('bsc',
-                                          '0xc3eBf192E1AfF802217a08Fd6b2eeDbBD4D87334',
-                                          transaction_bank,
-                                          processed_transaction_hashes,
-                                          pickle_file_name,
-                                          start_date,
-                                          end_date)
+    for chain in ['ethereum', 'bsc', 'polygon', 'fantom']:
+        process = input(f"Would you like to process {chain} transactions? (Y/n) ")
+        if process.lower() != "n":
+            with open("wallets.yml") as file:
+                wallets = yaml.load(file)
+            for (name, wallet) in wallets.items():
+                wallet_bsc = input(f"Would you like to import transactions for wallet {wallet} ({name}) on {chain}? (Y/n) ")
+                if wallet_bsc.lower() != "n":
+                    read_onchain_transactions('bsc',
+                                              '0xc3eBf192E1AfF802217a08Fd6b2eeDbBD4D87334',
+                                              transaction_bank,
+                                              processed_transaction_hashes,
+                                              pickle_file_name,
+                                              start_date,
+                                              end_date)
 
 if __name__ == '__main__':
     read_all_transactions()

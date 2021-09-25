@@ -1,4 +1,4 @@
-from engine import FeatureState, Holding, TokenState
+from utils import FeatureState, Holding, TokenState, get_user_input
 from transactions import TransactionType, Transaction
 
 from sys import exit
@@ -90,18 +90,19 @@ class TaxState(FeatureState):
         tax_year, _ = calculate_tax_year(end_time)
         # note down transactions eligible for 50% discount
         discount = (end_time > start_time + relativedelta(months=+12))
-        self.tax_years[tax_year].append([end_time, token, tax_type, start_price, end_price, volume, discount, amount])
+        self.tax_years[tax_year].append([start_time, end_time, token, tax_type, start_price, end_price, volume, discount, amount])
 
     def finish_processing(self, file_name):
         # process all the lists of lists for each year into dataframes
         # add total lines for each of income and capgains, then save to file
         for tax_year in self.tax_years.keys():
             # convert into dataframe
-            self.tax_years[tax_year] = pd.DataFrame(self.tax_years[tax_year], columns=['Time',
+            self.tax_years[tax_year] = pd.DataFrame(self.tax_years[tax_year], columns=['Time Acquired',
+                                                                                       'Time Disposed',
                                                                                        'Token',
                                                                                        'Tax Type',
-                                                                                       'Cost Basis',
-                                                                                       'Disposal Price',
+                                                                                       'Cost Base',
+                                                                                       'Capital Proceeds',
                                                                                        'Volume',
                                                                                        'CG Discount Eligible',
                                                                                        'Value'])
@@ -132,19 +133,19 @@ class TaxState(FeatureState):
 
             # add total rows
             self.tax_years[tax_year].loc[len(self.tax_years[tax_year])] = (
-                ['FY', 'Total Income', TaxType.INCOME, None, None, None, None, income]
+                [None, tax_year, 'Total Income', TaxType.INCOME, None, None, None, None, income]
             )
             self.tax_years[tax_year].loc[len(self.tax_years[tax_year])] = (
-                ['FY', 'Discount-Eligible CG', TaxType.CAPGAINS, None, None, None, None, discount_eligible_cap_gains]
+                [None, tax_year, 'Discount-Eligible CG', TaxType.CAPGAINS, None, None, None, None, discount_eligible_cap_gains]
             )
             self.tax_years[tax_year].loc[len(self.tax_years[tax_year])] = (
-                ['FY', 'Discount-Ineligible CG', TaxType.CAPGAINS, None, None, None, None, discount_ineligible_cap_gains]
+                [None, tax_year, 'Discount-Ineligible CG', TaxType.CAPGAINS, None, None, None, None, discount_ineligible_cap_gains]
             )
             self.tax_years[tax_year].loc[len(self.tax_years[tax_year])] = (
-                ['FY', 'Capital Losses', TaxType.CAPGAINS, None, None, None, None, cap_losses]
+                [None, tax_year, 'Capital Losses', TaxType.CAPGAINS, None, None, None, None, cap_losses]
             )
             self.tax_years[tax_year].loc[len(self.tax_years[tax_year])] = (
-                ['FY', 'Total Capital Gains', TaxType.CAPGAINS, None, None, None, None, cap_gains]
+                [None, tax_year, 'Total Capital Gains', TaxType.CAPGAINS, None, None, None, None, cap_gains]
             )
 
             # save to csv
@@ -185,9 +186,10 @@ class TaxTokenState(TokenState):
                 # get the needed info from the user
                 print(f"Token: {self.name}, remaining volume not matched: {sell_volume}")
                 print("Not enough holdings from buy/income transactions were found to match this disposal. Please enter the necessary information for taxes.")
-                time = datetime.datetime.strptime(input("Time when acquired: (YYYY-MM-DD HH:MM:SS) "), "%Y-%m-%d %H:%M:%S")
-                price = float(input("Fee-adjusted price per token when acquired: "))
-                volume = float(input("Number of units acquired: "))
+
+                time = get_user_input("Time when acquired: (YYYY-MM-DD HH:MM:SS) ", 'datetime')
+                price = get_user_input("Fee-adjusted price per token when acquired: ", 'float')
+                volume = get_user_input("Number of units acquired: ", 'float')
 
                 # don't pop excess volume back on, we don't want user inputs to mess it up too much
                 # they'll just have to input it again if they need it again later
@@ -277,8 +279,8 @@ def tax_read_in_transactions():
 def process_tax():
 
     print("What period would you like to calculate taxable income and capital gains for?")
-    start_date = datetime.datetime.strptime(input(f"Enter the start date: (YYYY-MM-DD) "), "%Y-%m-%d")
-    end_date = datetime.datetime.strptime(input(f"Enter the end date: (YYYY-MM-DD) "), "%Y-%m-%d")
+    start_date = get_user_input(f"Enter the start date: (YYYY-MM-DD) ", 'date')
+    end_date = get_user_input(f"Enter the end date: (YYYY-MM-DD) ", 'date')
 
     transaction_bank = tax_read_in_transactions()
     print("Returned transaction bank")
