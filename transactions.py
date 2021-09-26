@@ -1212,7 +1212,11 @@ def read_all_transactions():
 
     print("What time period would you like to process transactions for?")
     start_date = get_user_input(f"Enter the start date: (YYYY-MM-DD) ", 'date')
+    start_tz = get_user_input(f"What timezone is this date in, as an offset from UTC? (eg. +10, -9 etc.) ", 'int')
+    start_date -= datetime.timedelta(hours=start_tz)
     end_date = get_user_input(f"Enter the end date: (YYYY-MM-DD) ", 'date')
+    end_tz = get_user_input(f"What timezone is this date in, as an offset from UTC? (eg. +10, -9 etc.) ", 'int')
+    end_date -= datetime.timedelta(hours=end_tz)
 
     process = input(f"Would you like to process Binance transactions? (Y/n) ")
     if process.lower() != "n":

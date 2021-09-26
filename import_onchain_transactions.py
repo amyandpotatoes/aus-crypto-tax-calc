@@ -3,6 +3,7 @@
 from utils import save_transactions, get_user_input
 import yaml
 
+
 if __name__ == '__main__':
 
     for chain in ['ethereum', 'bsc', 'polygon', 'fantom']:

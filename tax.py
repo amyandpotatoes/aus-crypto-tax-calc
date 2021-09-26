@@ -186,8 +186,9 @@ class TaxTokenState(TokenState):
                 # get the needed info from the user
                 print(f"Token: {self.name}, remaining volume not matched: {sell_volume}")
                 print("Not enough holdings from buy/income transactions were found to match this disposal. Please enter the necessary information for taxes.")
-
                 time = get_user_input("Time when acquired: (YYYY-MM-DD HH:MM:SS) ", 'datetime')
+                tz = get_user_input(f"What timezone is this time in, as an offset from UTC? (eg. +10, -9 etc.) ", 'int')
+                time -= datetime.timedelta(hours=tz)
                 price = get_user_input("Fee-adjusted price per token when acquired: ", 'float')
                 volume = get_user_input("Number of units acquired: ", 'float')
 
@@ -285,7 +286,11 @@ def process_tax():
 
     print("What period would you like to calculate taxable income and capital gains for?")
     start_date = get_user_input(f"Enter the start date: (YYYY-MM-DD) ", 'date')
+    start_tz = get_user_input(f"What timezone is this date in, as an offset from UTC? (eg. +10, -9 etc.) ", 'int')
+    start_date -= datetime.timedelta(hours=start_tz)
     end_date = get_user_input(f"Enter the end date: (YYYY-MM-DD) ", 'date')
+    end_tz = get_user_input(f"What timezone is this date in, as an offset from UTC? (eg. +10, -9 etc.) ", 'int')
+    end_date -= datetime.timedelta(hours=end_tz)
 
     transaction_bank = tax_read_in_transactions()
     print("Returned transaction bank")
