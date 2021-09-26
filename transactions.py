@@ -1,5 +1,7 @@
 from utils import get_user_input, get_api_keys, get_transaction_by_hash, get_transactions_by_address
 
+import random
+import hashlib
 import os
 import pandas as pd
 import datetime
@@ -9,6 +11,7 @@ import pickle
 import glob
 import yaml
 import pprint
+import numpy as np
 from enum import Enum, auto
 from pycoingecko import CoinGeckoAPI
 from io import StringIO
@@ -119,7 +122,7 @@ def read_transactions(start_date, end_date):
     """
     transaction_bank = dict()
 
-    # read_binance_csv(transaction_bank, start_date, end_date)
+    read_binance_csv(transaction_bank, start_date, end_date)
 
     read_onchain_transactions(transaction_bank, start_date, end_date)
 
@@ -769,6 +772,7 @@ def add_transaction_to_transaction_bank(class_int, transaction_bank, temp_moves,
     """
     if class_int == 1:  # Buy + Sell
         # get values of tokens, used to calculate buy and sell cost bases/prices
+        print(f"temp flag: {temp_moves}")
         in_moves, out_moves, in_values, out_values, in_prop, out_prop = get_moves_and_values_by_direction(temp_moves, transaction_time, chain, transaction_hash, currency)
         # add transactions with incoming tokens (buys)
         add_transactions_w_opposite(transaction_bank, in_moves, in_prop, in_count, out_values, out_count, gas_fee_fiat, transaction_time, TransactionType.BUY)
@@ -1026,7 +1030,76 @@ def read_onchain_transactions(chain, wallet, transaction_bank, processed_transac
         print(f"Progress saved to {filename}")
 
 
-def read_binance_csv(transaction_bank, processed_transaction_hashes, pickle_file_name, start_date, end_date):
+def parse_and_classify_binance_transaction(transaction, transaction_time, transaction_hash, currency='aud'):
+    in_count = 0
+    out_count = 0
+    gas_fee_fiat = 0
+    temp_moves = []
+    class_int = 1
+    for op, row, index in transaction:
+        if op.lower() in ['pos savings interest', 'rewards distribution', 'savings interest']:
+            temp_moves.append({'token': row['Coin'],
+                               'token_contract': None,
+                               'direction': 'in',
+                               'quantity': row['Change']})
+            in_count += 1
+            class_int = 6
+        elif op.lower() in ['fee', 'commission fee shared with you']:
+            gas_fee_fiat += -1 * row['Change'] * get_token_price(row['Coin'], None, transaction_time, 'binance', transaction_hash, currency)
+        elif row['Change'] > 0:
+            temp_moves.append({'token': row['Coin'],
+                               'token_contract': None,
+                               'direction': 'in',
+                               'quantity': row['Change']})
+            in_count += 1
+        elif row['Change'] < 0:
+            temp_moves.append({'token': row['Coin'],
+                               'token_contract': None,
+                               'direction': 'out',
+                               'quantity': -1 * row['Change']})
+            out_count += 1
+        else:
+            raise Exception(f"Unsure how to handle binance csv row {row}")
+
+    # if gas fee is negative, treat positive fees as income
+    if gas_fee_fiat < 0:
+        gas_fee_fiat = 0
+        for op, row, index in transaction:
+            if op.lower() in ['fee', 'commission fee shared with you'] and row['Change'] > 0:
+                temp_moves.append({'token': row['Coin'],
+                                   'token_contract': None,
+                                   'direction': 'in',
+                                   'quantity': row['Change']})
+            elif op.lower() in ['fee', 'commission fee shared with you'] and row['Change'] < 0:
+                gas_fee_fiat += -1 * row['Change'] * get_token_price(row['Coin'], None, transaction_time, 'binance', transaction_hash, currency)
+
+    changes = 'y'
+    while changes.lower() == 'y':
+        print("Token movements: ")
+        for n, move in enumerate(temp_moves):
+            print(f"{n + 1}. {move}")
+        changes = input("Would you like to make any changes? (y/N) ")
+        if changes.lower() == 'y':
+            print("Options: \n1. Remove a transaction \n2. Add a transaction")
+            option = input(f"Select an option: (#/N) ")
+            if option.strip() == '1':
+                remove = input("Which transaction would you like to remove? (#/N) ")
+                if remove in [str(m) for m in range(1, len(temp_moves)+1)]:
+                    del temp_moves[int(remove)-1]
+            elif option.strip() == '2':
+                ticker = input("Enter token ticker: ")
+                token_contract = input("Enter token contract address: ")
+                direction = get_user_input("Enter token movement direction: (in/out) ", 'direction')
+                quantity = get_user_input("Enter quantity: (#) ", 'float')
+                temp_moves.append({'token': ticker,
+                                   'token_contract': token_contract,
+                                   'direction': direction,
+                                   'quantity': quantity})
+
+    return temp_moves, gas_fee_fiat, class_int, in_count, out_count
+
+
+def read_binance_csv(transaction_bank, processed_transaction_hashes, pickle_file_name, start_date, end_date, currency='aud'):
     """
     Reads in a csv file from binance and adds transactions to the transaction bank.
     :param transaction_bank: a dictionary mapping each token to a list of transactions
@@ -1034,19 +1107,69 @@ def read_binance_csv(transaction_bank, processed_transaction_hashes, pickle_file
     :param end_date: datetime object of latest date to get transactions from
     :return: The updated transaction_bank dictionary
     """
-    # read the csvs into a data frame
-    project_dir = os.path.dirname('__file__')
-    binance_dir = os.path.join(project_dir, 'transaction-files', 'binance')
-    full_df = pd.DataFrame()
-    for file in os.listdir(binance_dir):
-        df = pd.read_csv(file)
-        full_df.append(df)
+    # read all files for a given chain into single data frame
+    path = os.path.join('transaction-files', 'binance')
+    all_files = glob.glob(path + "/*.csv")
+
+    df_list = []
+
+    for filename in all_files:
+        df = pd.read_csv(filename, index_col=None, header=0)
+        df_list.append(df)
+
+    df = pd.concat(df_list, axis=0, ignore_index=True)
+    df['UTC_Time'] = pd.to_datetime(df['UTC_Time'], format="%Y-%m-%d %H:%M:%S")
+    transaction_list = []
 
     # iterate through each row and group all transactions that happened at the same time
     # this will make it possible to make the corresponding buy/sell transactions
+    # binance CSVs only go down to the second, so we need to ensure that we are not putting multiple transactions together
+    temp_transaction = []
+    for index, row in df.iterrows():
+        if start_date <= row['UTC_Time'] <= end_date:
+            # check whether we've had this time already - if not this is a new transaction
+            if row['UTC_Time'] not in [r['UTC_Time'] for _, r, _ in temp_transaction] and len(temp_transaction) > 0:
+                transaction_list.append(temp_transaction)
+                temp_transaction = []
 
-    # TODO: parse binance transactions and add to transaction bank
-    # base this off the on-chain read function, many of the helper functions can be reused
+            # skip any that are not tax relevant
+            if row['Operation'].lower() in ['deposit', 'withdraw', 'pos savings purchase', 'pos savings redemption', 'savings purchase', 'liquid swap add', 'savings principal redemption']:
+                continue
+            # if tax relevant, add to transaction
+            elif row['Operation'].lower() in ['pos savings interest', 'rewards distribution', 'savings interest',
+                                              'fee', 'transaction related', 'buy', 'sell',
+                                              'commission fee shared with you']:
+                temp_transaction.append((row['Operation'], row, index))
+            else:
+                raise Exception(f"Function read_binance_csv cannot handle the operation {row['Operation']}, code changes will need to be made to handle this.")
+
+    transaction_list.append(temp_transaction)
+
+    for transaction in transaction_list:
+        transaction_time = transaction[0][1]['UTC_Time']
+        hash_string = str(transaction_time) + '-' + '-'.join([op+row['Coin']+str(row['Change']) for op, row, index in transaction])
+        transaction_hash = hashlib.md5(hash_string.encode('utf-8')).hexdigest()
+
+        if transaction_hash in processed_transaction_hashes:
+            continue
+        print("-------------------------------------------------------------------------------------------------")
+
+        print(f"Transaction hash: {transaction_hash}")
+        print(f"Transaction time: {transaction_time}")
+
+        temp_moves, gas_fee_fiat, class_int, in_count, out_count = parse_and_classify_binance_transaction(transaction, transaction_time, transaction_hash, currency)
+
+        # Use classification to add to transaction bank
+        add_transaction_to_transaction_bank(class_int, transaction_bank, temp_moves, in_count, out_count, gas_fee_fiat, transaction_time, 'binance', transaction_hash, currency)
+
+        # mark transaction hash as processed
+        processed_transaction_hashes.append(transaction_hash)
+
+        # pickle progress so far
+        filename = os.path.join(os.path.dirname(__file__), "results", "transactions", f"{pickle_file_name}.p")
+        with open(filename, "wb") as pickle_file:
+            pickle.dump((transaction_bank, processed_transaction_hashes, PREVIOUS_PRICES), pickle_file)
+        print(f"Progress saved to {filename}")
 
 
 def read_all_transactions():
@@ -1091,6 +1214,10 @@ def read_all_transactions():
     start_date = get_user_input(f"Enter the start date: (YYYY-MM-DD) ", 'date')
     end_date = get_user_input(f"Enter the end date: (YYYY-MM-DD) ", 'date')
 
+    process = input(f"Would you like to process Binance transactions? (Y/n) ")
+    if process.lower() != "n":
+        read_binance_csv(transaction_bank, processed_transaction_hashes, pickle_file_name, start_date, end_date)
+
     for chain in ['ethereum', 'bsc', 'polygon', 'fantom']:
         process = input(f"Would you like to process {chain} transactions? (Y/n) ")
         if process.lower() != "n":
@@ -1106,6 +1233,7 @@ def read_all_transactions():
                                               pickle_file_name,
                                               start_date,
                                               end_date)
+
 
 if __name__ == '__main__':
     read_all_transactions()

@@ -223,7 +223,7 @@ def calculate_tax_year(date):
         return f"{date.year - 1}-{date.year - 2000}FY", date.year
 
 
-def tax_process_all_transactions(transaction_bank, start_date, end_date):
+def tax_process_all_transactions(transaction_bank, start_date, end_date, currency='aud'):
     # create a TaxState object that holds information about the state and results of the processing so far
     print("Trying to create a tax state...")
     tax = TaxState(start_date, end_date)
@@ -232,6 +232,12 @@ def tax_process_all_transactions(transaction_bank, start_date, end_date):
     # transaction bank is a dictionary of (token ticker: list of transactions) pairs
     # go through tokens, processing each transaction and the tax consequences
     for (token, transactions) in transaction_bank.items():
+        # if token is fiat currency, only process gains as taxable
+        if token.lower() == currency.lower():
+            for transaction in transactions:
+                if transaction.transaction_type == TransactionType.GAIN:
+                    tax.process_gain(transaction)
+
         # sort the list of transactions by date
         transactions.sort()
 
@@ -247,7 +253,6 @@ def tax_process_all_transactions(transaction_bank, start_date, end_date):
                 tax.process_loss(transaction)
             else:
                 raise Exception("Transaction Type is not valid")
-            print("Processed a transaction..")
 
     # finish processing
     file_name = input("Processing finished. \nOutput file name: ")
