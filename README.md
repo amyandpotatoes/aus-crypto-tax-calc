@@ -12,6 +12,7 @@ This program currently only supports the following Centralised Exchanges and blo
 - binance smart chain
 - polygon
 - fantom
+  
 If you'd like to help us cover more CEXs and chains, please add it in the issues tab!
 
 ### Requirements
@@ -42,11 +43,12 @@ all CSVs in this folder will be read in sequence.
 
 ### How to run
 
-If you would like to use transactions from any of the following blockchains:
-    - ethereum
-    - binance smart chain
-    - polygon
-    - fantom
+If you would like to use transactions from any of the following blockchains:  
+    - ethereum  
+    - binance smart chain  
+    - polygon  
+    - fantom  
+  
 Then run the 'import_onchain_transaction.py' module.
 
 Next, run the 'transactions.py' module to parse transactions and categorise them. Each time a transaction is parsed, progress is saved to a file which can be retrieved later.
