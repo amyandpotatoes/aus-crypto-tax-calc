@@ -10,7 +10,7 @@ if __name__ == '__main__':
         process = input(f"Would you like to process {chain} transactions? (Y/n) ")
         if process.lower() != "n":
             with open("wallets.yml") as file:
-                wallets = yaml.load(file)
+                wallets = yaml.load(file, Loader=yaml.SafeLoader)
             for (name, wallet) in wallets.items():
                 wallet_bsc = input(f"Would you like to import transactions for wallet {wallet} ({name}) on {chain}? (Y/n) ")
                 if wallet_bsc.lower() != "n":
