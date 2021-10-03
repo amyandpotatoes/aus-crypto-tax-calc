@@ -320,12 +320,14 @@ def get_token_price(token, token_contract_address, transaction_time, chain, orig
     print(f"Estimating price for {token} from preceding transactions...")
     print("Trying method 1...")
 
+    api_domains = {'ethereum': 'api.etherscan.io', 'polygon': 'api.polygonscan.com', 'bsc': 'api.bscscan.com', 'ftmscan': 'api.ftmscan.com'}
+
     # get latest block before provided time
-    api_key = get_api_keys()['bsc']
-    block = int(requests.get(f"https://api.bscscan.com/api?module=block&action=getblocknobytime&timestamp={epoch_time}&closest=before&apikey={api_key}").json()['result'])
+    api_key = get_api_keys()[chain]
+    block = int(requests.get(f"https://{api_domains[chain]}/api?module=block&action=getblocknobytime&timestamp={epoch_time}&closest=before&apikey={api_key}").json()['result'])
 
     # get transactions prior to block above
-    result = requests.get(f"https://api.bscscan.com/api?module=account&action=txlist&address={token_contract_address}&startblock=1&endblock={block}&sort=desc&apikey={api_key}").json()['result']
+    result = requests.get(f"https://{api_domains[chain]}/api?module=account&action=txlist&address={token_contract_address}&startblock=1&endblock={block}&sort=desc&apikey={api_key}").json()['result']
 
     # get transaction hashes for non-approval transactions
     transaction_hashes = [transaction['hash'] for transaction in result if transaction['input'][:10] != '0x095ea7b3']
@@ -372,7 +374,7 @@ def get_token_price(token, token_contract_address, transaction_time, chain, orig
             # get transactions prior to block above for each of the swap addresses
             # TODO: try tokentx
             result = \
-            requests.get(f"https://api.bscscan.com/api?module=account&action=txlist&address={swap_address}&startblock=1&endblock={block}&page={page}&offset=10000&sort=desc&apikey={api_key}").json()[
+            requests.get(f"https://{api_domains[chain]}/api?module=account&action=txlist&address={swap_address}&startblock=1&endblock={block}&page={page}&offset=10000&sort=desc&apikey={api_key}").json()[
                 'result']
 
             if not result:
@@ -874,9 +876,11 @@ def parse_onchain_transactions(chain, wallet, df, transaction_hash, currency='au
                                'direction': 'out',
                                'quantity': quantity})
 
+
     # get internal transactions related to hash
-    api_key = get_api_keys()['bsc']
-    response = requests.get(f"https://api.bscscan.com/api?module=account&action=txlistinternal&txhash={transaction_hash}&apikey={api_key}")
+    api_domains = {'ethereum': 'api.etherscan.io', 'polygon': 'api.polygonscan.com', 'bsc': 'api.bscscan.com', 'ftmscan': 'api.ftmscan.com'}
+    api_key = get_api_keys()[chain]
+    response = requests.get(f"https://{api_domains[chain]}/api?module=account&action=txlistinternal&txhash={transaction_hash}&apikey={api_key}")
 
     result = response.json()['result']
     # print(f"Internal transactions: {result}")
@@ -1228,10 +1232,10 @@ def read_all_transactions():
             with open("wallets.yml") as file:
                 wallets = yaml.load(file)
             for (name, wallet) in wallets.items():
-                wallet_bsc = input(f"Would you like to import transactions for wallet {wallet} ({name}) on {chain}? (Y/n) ")
-                if wallet_bsc.lower() != "n":
-                    read_onchain_transactions('bsc',
-                                              '0xc3eBf192E1AfF802217a08Fd6b2eeDbBD4D87334',
+                wallet_choice = input(f"Would you like to import transactions for wallet {wallet} ({name}) on {chain}? (Y/n) ")
+                if wallet_choice.lower() != "n":
+                    read_onchain_transactions(chain,
+                                              wallet,
                                               transaction_bank,
                                               processed_transaction_hashes,
                                               pickle_file_name,
