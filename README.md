@@ -27,12 +27,12 @@ of the following chains:
 
 ### Preparation
 Before you start the program you will need to:
-1. Add your API keys to the api_keys.yml file, an example format is shown below
+1. Create a file called api_keys.yml in the top level directory and add your API keys, an example format is shown below
 ```
 covalent: ckey_COVALENTKEYHERE
 bsc: BSCKEYHERE
 ```
-2. Add your wallet public addresses to the wallets.yml file, you can name each entry whatever is helpful to you
+2. Create a file called wallets.yml in the top level directory and add your wallet public addresses, you can name each entry whatever is helpful to you
 ```
 wallet1: '0x1234567812345678123456781234567812345678'
 wallet2: '0x1234567812345678123456781234567812345678'
