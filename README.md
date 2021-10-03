@@ -43,6 +43,11 @@ wallet2: '0x1234567812345678123456781234567812345678'
 3. If you have any binance transactions, extract a CSV transaction summary for the appropriate time frame from binance and 
 place this in the /transaction-files/binance folder. This programs supports transactions spread across multiple CSVs, so 
 all CSVs in this folder will be read in sequence.
+Ensure your transaction history includes:  
+- trading activity
+- any binance ethereum staking (trading ETH for BETH) and income
+- any locked staking income
+- any other income
 
 ### How to run
 
