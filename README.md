@@ -30,7 +30,10 @@ Before you start the program you will need to:
 1. Create a file called api_keys.yml in the top level directory and add your API keys, an example format is shown below
 ```
 covalent: ckey_COVALENTKEYHERE
-bsc: BSCKEYHERE
+bsc: BSCSCANKEYHERE
+polygon: POLYGONSCANKEYHERE
+ethereum: ETHERSCANKEYHERE
+fantom: FTMSCANKEYHERE
 ```
 2. Create a file called wallets.yml in the top level directory and add your wallet public addresses, you can name each entry whatever is helpful to you
 ```
