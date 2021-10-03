@@ -271,6 +271,8 @@ def get_token_price(token, token_contract_address, transaction_time, chain, orig
                     COINGECKO_NO_CONFIRM.remove(token.lower())
                 if token.lower() in TICKERS_NO_CONFIRM:
                     TICKERS_NO_CONFIRM.remove(token.lower())
+                if token.lower() in NOCOINGECKO_NO_CONFIRM:
+                    NOCOINGECKO_NO_CONFIRM.remove(token.lower())
 
     # if checks have passed, use coingecko to find price
     if (use_coingecko.lower() != 'n') and (token.lower() not in NOCOINGECKO_NO_CONFIRM) and (token_id in COINGECKOID_LIST):
