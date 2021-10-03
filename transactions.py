@@ -61,12 +61,14 @@ def create_coingecko_id_lookup():
     Create a dictionary that links token tickers to coingecko IDs.
     :return: lookup, that dictionary
     """
+    # TODO: save all coin names that match a ticker, and allow user to choose if there is more than 1
     cg = CoinGeckoAPI()
     coin_list = cg.get_coins_list()
     lookup = {}
     id_list = []
     for coin in coin_list:
-        lookup[coin['symbol'].lower()] = coin['id']
+        if coin['symbol'] not in lookup.keys():
+            lookup[coin['symbol'].lower()] = coin['id']
         id_list.append(coin['id'])
     return lookup, id_list
 
