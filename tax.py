@@ -271,7 +271,7 @@ def tax_read_in_transactions():
             file_num = input(f"Which transaction file would you like to load? (#/N) ")
             if file_num in [str(m) for m in range(1, len(file_list) + 1)]:
                 with open(file_list[int(file_num) - 1], "rb") as pickle_file:
-                    (transaction_bank, processed_transaction_hashes) = pickle.load(pickle_file)
+                    (transaction_bank, processed_transaction_hashes, _) = pickle.load(pickle_file)
                 print(f"Loaded transaction hashes: {processed_transaction_hashes}")
                 pp = pprint.PrettyPrinter()
                 print("Loaded transactions:")
