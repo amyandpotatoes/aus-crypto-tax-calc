@@ -187,17 +187,17 @@ def printProgressBar (iteration, total, prefix='', suffix='', decimals=1, length
         print()
 
 
-def store_token_price(token, time, price):
+def store_token_price(token, token_hash, time, price):
     if token in PREVIOUS_PRICES:
-        PREVIOUS_PRICES[token][time] = price
+        PREVIOUS_PRICES[(token, token_hash)][time] = price
     else:
-        PREVIOUS_PRICES[token] = {time: price}
+        PREVIOUS_PRICES[(token, token_hash)] = {time: price}
 
 
-def retrieve_token_price(token, time, verbose=True):
+def retrieve_token_price(token, token_hash, time, verbose=True):
     prices = []
-    if token in PREVIOUS_PRICES:
-        for prev_time in PREVIOUS_PRICES[token].keys():
+    if (token, token_hash) in PREVIOUS_PRICES.keys():
+        for prev_time in PREVIOUS_PRICES[(token, token_hash)].keys():
             if time-datetime.timedelta(hours=24) <= prev_time <= time+datetime.timedelta(hours=24):
                 prices.append((abs(time-prev_time), prev_time))
         if len(prices) == 0:
@@ -205,11 +205,11 @@ def retrieve_token_price(token, time, verbose=True):
         else:
             (_, closest_time) = min(prices)
         if verbose:
-            print(f"We previously found that the price per token for {token} at {closest_time} was {PREVIOUS_PRICES[token][closest_time]}.")
+            print(f"We previously found that the price per token for {token}({token_hash}) at {closest_time} was {PREVIOUS_PRICES[(token, token_hash)][closest_time]}.")
             assume = input(f"Would you like to assume the price at {time} was the same? (Y/n) ")
             if assume.lower() == 'n':
                 return None
-        return PREVIOUS_PRICES[token][prev_time]
+        return PREVIOUS_PRICES[(token, token_hash)][prev_time]
     return None
 
 
@@ -302,16 +302,16 @@ def get_token_price(token, token_contract_address, transaction_time, chain, orig
                 min_time_difference = time_difference
                 token_price = price
 
-        store_token_price(token, transaction_time, token_price)
+        store_token_price(token, token_contract_address, transaction_time, token_price)
         return token_price
 
-    previous_price = retrieve_token_price(token, transaction_time)
+    previous_price = retrieve_token_price(token, token_contract_address, transaction_time)
     if previous_price:
         return previous_price
 
     # else use manual price method
     print(f"Estimating price for {token} from other tokens in transaction...")
-    price_estimate = get_estimated_price_from_transaction(original_transaction_hash, token, chain, currency)
+    price_estimate = get_estimated_price_from_transaction(original_transaction_hash, token, token_contract_address, chain, currency)
     if not price_estimate:
         print(f"Could not estimate price from other tokens, trying other methods...")
     else:
@@ -319,7 +319,7 @@ def get_token_price(token, token_contract_address, transaction_time, chain, orig
         use_price = input(f"Are you confident this is the correct price? "
                           f"If not, further price estimation will be used and you can manually enter a price if they are not successful. (y/N) ")
         if use_price.lower() == "y":
-            store_token_price(token, transaction_time, price_estimate)
+            store_token_price(token, token_contract_address, transaction_time, price_estimate)
             return price_estimate
 
     price_estimates = []
@@ -348,7 +348,7 @@ def get_token_price(token, token_contract_address, transaction_time, chain, orig
                 break
 
             # get price from transaction
-            price_estimate = get_estimated_price_from_transaction(transaction_hash, token, chain, currency)
+            price_estimate = get_estimated_price_from_transaction(transaction_hash, token, token_contract_address, chain, currency)
 
             if price_estimate:
                 price_estimates.append(price_estimate)
@@ -363,7 +363,7 @@ def get_token_price(token, token_contract_address, transaction_time, chain, orig
             average_price = sum(price_estimates[2:8]) / 6
             print(f"Estimated price is {average_price}")
             token_price = average_price
-            store_token_price(token, transaction_time, token_price)
+            store_token_price(token, token_contract_address, transaction_time, token_price)
             return token_price
 
     method2 = input(f"Would you like to try method 2? (y/N) ")
@@ -409,7 +409,7 @@ def get_token_price(token, token_contract_address, transaction_time, chain, orig
                         break
 
                     # get price from transaction
-                    price_estimate = get_estimated_price_from_transaction(transaction_hash, token, chain, currency)
+                    price_estimate = get_estimated_price_from_transaction(transaction_hash, token, token_contract_address, chain, currency)
 
                     if price_estimate:
                         price_estimates.append(price_estimate)
@@ -425,7 +425,7 @@ def get_token_price(token, token_contract_address, transaction_time, chain, orig
                 average_price = sum(price_estimates[2:8]) / 6
                 print(f"Estimated price is {average_price}")
                 token_price = average_price
-                store_token_price(token, transaction_time, token_price)
+                store_token_price(token, token_contract_address, transaction_time, token_price)
                 return token_price
 
     print('Could not find enough transactions to get an accurate price estimate...')
@@ -434,11 +434,11 @@ def get_token_price(token, token_contract_address, transaction_time, chain, orig
     token_price = get_user_input(f'Enter price per token at {transaction_time} in {currency} manually: ', 'float')
     save_price = input(f"Would you like to save this price of {token_price} {currency} for {token}? (y/N) ")
     if save_price.lower() == 'y':
-        store_token_price(token, transaction_time, token_price)
+        store_token_price(token, token_contract_address, transaction_time, token_price)
     return token_price
 
 
-def get_estimated_price_from_transaction(transaction_hash, token, chain, currency):
+def get_estimated_price_from_transaction(transaction_hash, token, token_contract_address, chain, currency):
     # read information about transaction into df
     data_text = get_transaction_by_hash(CHAIN_IDS[chain], transaction_hash)
     try:
@@ -473,10 +473,10 @@ def get_estimated_price_from_transaction(transaction_hash, token, chain, currenc
     # all tokens are in coingeckoid_lookup, this prevents this code from looping
     # AND there is one incoming and one outgoing token, for simplicity
     # AND one of those tokens is the token in question
-    retrieved_price = retrieve_token_price(token, transaction_time)
+    retrieved_price = retrieve_token_price(token, token_contract_address, transaction_time)
     if (not all([(move['token'].lower() in COINGECKOID_LOOKUP.keys()
                   or move['token'] == token)
-                  or retrieve_token_price(move['token'], transaction_time, verbose=False)
+                  or retrieve_token_price(move['token'], move['token_contract_address'], transaction_time, verbose=False)
                  for move in moves])
             or not (len(in_moves) == 1 and len(out_moves) == 1)
             or not any([move['token'] == token for move in moves])):
@@ -676,9 +676,9 @@ def add_transactions_w_opposite(transaction_bank, self_moves, self_props, self_c
         print(temp_transaction)
         _ = input('Adding above transaction... (Press enter to continue)')
         if move['token'] in transaction_bank:
-            transaction_bank[move['token']].append(temp_transaction)
+            transaction_bank[(move['token'], move['token_contract'])].append(temp_transaction)
         else:
-            transaction_bank[move['token']] = [temp_transaction]
+            transaction_bank[(move['token'], move['token_contract'])] = [temp_transaction]
 
 
 def add_transactions_no_opposite(transaction_bank, self_moves, self_count, self_values, gas_fee_fiat, transaction_time, transaction_type, taxable_prop):
@@ -705,9 +705,9 @@ def add_transactions_no_opposite(transaction_bank, self_moves, self_count, self_
         print(vars(temp_transaction))
         _ = input('Adding above transaction... (Press enter to continue)')
         if move['token'] in transaction_bank:
-            transaction_bank[move['token']].append(temp_transaction)
+            transaction_bank[(move['token'], move['token_contract'])].append(temp_transaction)
         else:
-            transaction_bank[move['token']] = [temp_transaction]
+            transaction_bank[(move['token'], move['token_contract'])] = [temp_transaction]
 
 
 def classify_transaction(temp_moves, currency):

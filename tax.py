@@ -232,7 +232,7 @@ def tax_process_all_transactions(transaction_bank, start_date, end_date, currenc
 
     # transaction bank is a dictionary of (token ticker: list of transactions) pairs
     # go through tokens, processing each transaction and the tax consequences
-    for (token, transactions) in transaction_bank.items():
+    for ((token, token_hash), transactions) in transaction_bank.items():
         # if token is fiat currency, only process gains as taxable
         if token.lower() == currency.lower():
             for transaction in transactions:
