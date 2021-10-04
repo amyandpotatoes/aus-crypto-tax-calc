@@ -432,7 +432,9 @@ def get_token_price(token, token_contract_address, transaction_time, chain, orig
     if len(price_estimates) > 0:
         print(f"Price estimates found: {price_estimates}")
     token_price = get_user_input(f'Enter price per token at {transaction_time} in {currency} manually: ', 'float')
-    store_token_price(token, transaction_time, token_price)
+    save_price = input(f"Would you like to save this price of {token_price} {currency} for {token}? (y/N) ")
+    if save_price.lower() == 'y':
+        store_token_price(token, transaction_time, token_price)
     return token_price
 
 
