@@ -983,7 +983,7 @@ def read_onchain_transactions(chain, wallet, transaction_bank, processed_transac
 
     # read all files for a given chain into single data frame
     path = os.path.join('transaction-files', chain)
-    all_files = glob.glob(path + "/transactions.csv")
+    all_files = glob.glob(path + "/*.csv")
 
     df_list = []
 
