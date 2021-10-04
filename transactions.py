@@ -778,7 +778,6 @@ def add_transaction_to_transaction_bank(class_int, transaction_bank, temp_moves,
     """
     if class_int == 1:  # Buy + Sell
         # get values of tokens, used to calculate buy and sell cost bases/prices
-        print(f"temp flag: {temp_moves}")
         in_moves, out_moves, in_values, out_values, in_prop, out_prop = get_moves_and_values_by_direction(temp_moves, transaction_time, chain, transaction_hash, currency)
         # add transactions with incoming tokens (buys)
         add_transactions_w_opposite(transaction_bank, in_moves, in_prop, in_count, out_values, out_count, gas_fee_fiat, transaction_time, TransactionType.BUY)
@@ -880,7 +879,6 @@ def parse_onchain_transactions(chain, wallet, df, transaction_hash, currency='au
                                'direction': 'out',
                                'quantity': quantity})
 
-
     # get internal transactions related to hash
     api_domains = {'ethereum': 'api.etherscan.io', 'polygon': 'api.polygonscan.com', 'bsc': 'api.bscscan.com', 'ftmscan': 'api.ftmscan.com'}
     api_key = get_api_keys()[chain]
@@ -889,7 +887,7 @@ def parse_onchain_transactions(chain, wallet, df, transaction_hash, currency='au
     result = response.json()['result']
     # print(f"Internal transactions: {result}")
 
-    # use temporary dictionary to store information about transaction until more information can be gained so it can be added to transaction bank
+    # use temporary dictionary to store information about transaction until more information can be gained so it can be added to transaction bankfixed
     for internal_transaction in result:
         # get incoming tokens from internal transactions
         if internal_transaction['to'].lower() == wallet.lower():
@@ -985,7 +983,7 @@ def read_onchain_transactions(chain, wallet, transaction_bank, processed_transac
 
     # read all files for a given chain into single data frame
     path = os.path.join('transaction-files', chain)
-    all_files = glob.glob(path + "/*.csv")
+    all_files = glob.glob(path + "/transactions.csv")
 
     df_list = []
 

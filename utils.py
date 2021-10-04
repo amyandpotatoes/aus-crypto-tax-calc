@@ -243,9 +243,3 @@ def save_transactions(chain, address):
 
     with open(filename, 'w') as file:
         file.write(data_csv)
-
-    # save all transactions
-    filename = os.path.join('transaction-files', chain, 'transactions-all.csv')
-
-    with open(filename, 'w') as file:
-        file.write(data_text)
