@@ -188,10 +188,16 @@ def printProgressBar (iteration, total, prefix='', suffix='', decimals=1, length
 
 
 def store_token_price(token, token_hash, time, price):
-    if token in PREVIOUS_PRICES:
-        PREVIOUS_PRICES[(token, token_hash)][time] = price
+    if token.lower() == 'cake-lp':
+        if token in PREVIOUS_PRICES:
+            PREVIOUS_PRICES[(token, token_hash)][time] = price
+        else:
+            PREVIOUS_PRICES[(token, token_hash)] = {time: price}
     else:
-        PREVIOUS_PRICES[(token, token_hash)] = {time: price}
+        if token in PREVIOUS_PRICES:
+            PREVIOUS_PRICES[token][time] = price
+        else:
+            PREVIOUS_PRICES[token] = {time: price}
 
 
 def retrieve_token_price(token, token_hash, time, verbose=True):
@@ -205,11 +211,20 @@ def retrieve_token_price(token, token_hash, time, verbose=True):
         else:
             (_, closest_time) = min(prices)
         if verbose:
-            print(f"We previously found that the price per token for {token}({token_hash}) at {closest_time} was {PREVIOUS_PRICES[(token, token_hash)][closest_time]}.")
-            assume = input(f"Would you like to assume the price at {time} was the same? (Y/n) ")
-            if assume.lower() == 'n':
-                return None
-        return PREVIOUS_PRICES[(token, token_hash)][prev_time]
+            if token.lower() == 'cake-lp':
+                print(f"We previously found that the price per token for {token}({token_hash}) at {closest_time} was {PREVIOUS_PRICES[(token, token_hash)][closest_time]}.")
+                assume = input(f"Would you like to assume the price at {time} was the same? (Y/n) ")
+                if assume.lower() == 'n':
+                    return None
+            else:
+                print(f"We previously found that the price per token for {token}({token_hash}) at {closest_time} was {PREVIOUS_PRICES[token][closest_time]}.")
+                assume = input(f"Would you like to assume the price at {time} was the same? (Y/n) ")
+                if assume.lower() == 'n':
+                    return None
+        if token.lower() == 'cake-lp':
+            return PREVIOUS_PRICES[(token, token_hash)][prev_time]
+        else:
+            return PREVIOUS_PRICES[token][prev_time]
     return None
 
 
@@ -675,10 +690,16 @@ def add_transactions_w_opposite(transaction_bank, self_moves, self_props, self_c
                                        price_inc_fee_1token)
         print(temp_transaction)
         _ = input('Adding above transaction... (Press enter to continue)')
-        if move['token'] in transaction_bank:
-            transaction_bank[(move['token'], move['token_contract'])].append(temp_transaction)
+        if move['token'].lower() == 'cake-lp':
+            if move['token'] in transaction_bank:
+                transaction_bank[(move['token'], move['token_contract'])].append(temp_transaction)
+            else:
+                transaction_bank[(move['token'], move['token_contract'])] = [temp_transaction]
         else:
-            transaction_bank[(move['token'], move['token_contract'])] = [temp_transaction]
+            if move['token'] in transaction_bank:
+                transaction_bank[move['token']].append(temp_transaction)
+            else:
+                transaction_bank[move['token']] = [temp_transaction]
 
 
 def add_transactions_no_opposite(transaction_bank, self_moves, self_count, self_values, gas_fee_fiat, transaction_time, transaction_type, taxable_prop, silent_income=False):
@@ -705,10 +726,16 @@ def add_transactions_no_opposite(transaction_bank, self_moves, self_count, self_
         print(vars(temp_transaction))
         if silent_income:
             _ = input('Adding above transaction... (Press enter to continue)')
-        if move['token'] in transaction_bank:
-            transaction_bank[(move['token'], move['token_contract'])].append(temp_transaction)
+        if move['token'].lower() == 'cake-lp':
+            if move['token'] in transaction_bank:
+                transaction_bank[(move['token'], move['token_contract'])].append(temp_transaction)
+            else:
+                transaction_bank[(move['token'], move['token_contract'])] = [temp_transaction]
         else:
-            transaction_bank[(move['token'], move['token_contract'])] = [temp_transaction]
+            if move['token'] in transaction_bank:
+                transaction_bank[move['token']].append(temp_transaction)
+            else:
+                transaction_bank[move['token']] = [temp_transaction]
 
 
 def classify_transaction(temp_moves, currency):
