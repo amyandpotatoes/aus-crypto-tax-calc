@@ -53,6 +53,7 @@ NOCOINGECKO_NO_CONFIRM = []
 SWAP_ADDRESSES = dict()
 
 # dictionary for retrieving previously found prices in token ticker:datetime:price format
+# TODO: save prices based on hash rather than name
 PREVIOUS_PRICES = dict()
 
 
