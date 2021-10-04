@@ -681,7 +681,7 @@ def add_transactions_w_opposite(transaction_bank, self_moves, self_props, self_c
             transaction_bank[(move['token'], move['token_contract'])] = [temp_transaction]
 
 
-def add_transactions_no_opposite(transaction_bank, self_moves, self_count, self_values, gas_fee_fiat, transaction_time, transaction_type, taxable_prop):
+def add_transactions_no_opposite(transaction_bank, self_moves, self_count, self_values, gas_fee_fiat, transaction_time, transaction_type, taxable_prop, silent_income=False):
     """
     Calculate the cost basis/price of a cryptocurrency token exchanged in a transaction, and add it to the transaction bank
     This function is used where you calculate the price based on the market value of the token, rather than the market value of what it is being exchanged with.
@@ -703,7 +703,8 @@ def add_transactions_no_opposite(transaction_bank, self_moves, self_count, self_
         temp_transaction = Transaction(transaction_time, transaction_type, move['token'], move['quantity'] * taxable_prop, gas_fee_fiat / self_count, raw_price_1token,
                                        price_inc_fee_1token)
         print(vars(temp_transaction))
-        _ = input('Adding above transaction... (Press enter to continue)')
+        if silent_income:
+            _ = input('Adding above transaction... (Press enter to continue)')
         if move['token'] in transaction_bank:
             transaction_bank[(move['token'], move['token_contract'])].append(temp_transaction)
         else:
@@ -750,22 +751,22 @@ def classify_transaction(temp_moves, currency):
         class_guess = 'Income'
         class_int = correct_transaction_classification(class_guess)
         if not class_int:
-            class_int = 5
+            class_int = 6
     elif in_count == 0 and out_count == 0:
         class_guess = 'Non-taxable'
         class_int = correct_transaction_classification(class_guess)
         if not class_int:
-            class_int = 8
+            class_int = 9
     else:
         class_guess = 'Non-taxable'
         class_int = correct_transaction_classification(class_guess)
         if not class_int:
-            class_int = 8
+            class_int = 9
 
     return class_int, in_count, out_count
 
 
-def add_transaction_to_transaction_bank(class_int, transaction_bank, temp_moves, in_count, out_count, gas_fee_fiat, transaction_time, chain, transaction_hash, currency):
+def add_transaction_to_transaction_bank(class_int, transaction_bank, temp_moves, in_count, out_count, gas_fee_fiat, transaction_time, chain, transaction_hash, currency, silent_income=False):
     """
     Gets the fiat values of the tokens in the transaction and adds transaction to transaction bank, using on the
     transaction classification provided in class_int to determine that TransactionType and other details.
@@ -823,7 +824,7 @@ def add_transaction_to_transaction_bank(class_int, transaction_bank, temp_moves,
         # get values of tokens, used to calculate buy and sell cost bases/prices
         in_moves, _, in_values, _, in_prop, _ = get_moves_and_values_by_direction(temp_moves, transaction_time, chain, transaction_hash, currency)
         # add transactions with incoming tokens (income)
-        add_transactions_no_opposite(transaction_bank, in_moves, in_count, in_values, gas_fee_fiat, transaction_time, TransactionType.GAIN, 1)
+        add_transactions_no_opposite(transaction_bank, in_moves, in_count, in_values, gas_fee_fiat, transaction_time, TransactionType.GAIN, 1, silent_income)
     elif class_int == 7:  # taxable loss
         # get values of tokens, used to calculate buy and sell cost bases/prices
         _, out_moves, _, out_values, _, out_prop = get_moves_and_values_by_direction(temp_moves, transaction_time, chain, transaction_hash, currency)
@@ -1041,7 +1042,7 @@ def read_onchain_transactions(chain, wallet, transaction_bank, processed_transac
         print(f"Progress saved to {filename}")
 
 
-def parse_and_classify_binance_transaction(transaction, transaction_time, transaction_hash, currency='aud'):
+def parse_and_classify_binance_transaction(transaction, transaction_time, transaction_hash, currency='aud', silent_income=False):
     in_count = 0
     out_count = 0
     gas_fee_fiat = 0
@@ -1089,23 +1090,24 @@ def parse_and_classify_binance_transaction(transaction, transaction_time, transa
         print("Token movements: ")
         for n, move in enumerate(temp_moves):
             print(f"{n + 1}. {move}")
-        changes = input("Would you like to make any changes? (y/N) ")
-        if changes.lower() == 'y':
-            print("Options: \n1. Remove a transaction \n2. Add a transaction")
-            option = input(f"Select an option: (#/N) ")
-            if option.strip() == '1':
-                remove = input("Which transaction would you like to remove? (#/N) ")
-                if remove in [str(m) for m in range(1, len(temp_moves)+1)]:
-                    del temp_moves[int(remove)-1]
-            elif option.strip() == '2':
-                ticker = input("Enter token ticker: ")
-                token_contract = input("Enter token contract address: ")
-                direction = get_user_input("Enter token movement direction: (in/out) ", 'direction')
-                quantity = get_user_input("Enter quantity: (#) ", 'float')
-                temp_moves.append({'token': ticker,
-                                   'token_contract': token_contract,
-                                   'direction': direction,
-                                   'quantity': quantity})
+        if not (len([True for m in temp_moves if m['direction'] == 'in']) == 1 and len([True for m in temp_moves if m['direction'] == 'out']) == 0 and silent_income):
+            changes = input("Would you like to make any changes? (y/N) ")
+            if changes.lower() == 'y':
+                print("Options: \n1. Remove a transaction \n2. Add a transaction")
+                option = input(f"Select an option: (#/N) ")
+                if option.strip() == '1':
+                    remove = input("Which transaction would you like to remove? (#/N) ")
+                    if remove in [str(m) for m in range(1, len(temp_moves)+1)]:
+                        del temp_moves[int(remove)-1]
+                elif option.strip() == '2':
+                    ticker = input("Enter token ticker: ")
+                    token_contract = input("Enter token contract address: ")
+                    direction = get_user_input("Enter token movement direction: (in/out) ", 'direction')
+                    quantity = get_user_input("Enter quantity: (#) ", 'float')
+                    temp_moves.append({'token': ticker,
+                                       'token_contract': token_contract,
+                                       'direction': direction,
+                                       'quantity': quantity})
 
     return temp_moves, gas_fee_fiat, class_int, in_count, out_count
 
@@ -1156,6 +1158,12 @@ def read_binance_csv(transaction_bank, processed_transaction_hashes, pickle_file
 
     transaction_list.append(temp_transaction)
 
+    skip = input(f"Would you like to skip confirmation for income transactions? (y/N) ")
+    if skip.lower == 'y':
+        silent_income = True
+    else:
+        silent_income = False
+
     for transaction in transaction_list:
         transaction_time = transaction[0][1]['UTC_Time']
         hash_string = str(transaction_time) + '-' + '-'.join([op+row['Coin']+str(row['Change']) for op, row, index in transaction])
@@ -1168,10 +1176,10 @@ def read_binance_csv(transaction_bank, processed_transaction_hashes, pickle_file
         print(f"Transaction hash: {transaction_hash}")
         print(f"Transaction time: {transaction_time}")
 
-        temp_moves, gas_fee_fiat, class_int, in_count, out_count = parse_and_classify_binance_transaction(transaction, transaction_time, transaction_hash, currency)
+        temp_moves, gas_fee_fiat, class_int, in_count, out_count = parse_and_classify_binance_transaction(transaction, transaction_time, transaction_hash, currency, silent_income)
 
         # Use classification to add to transaction bank
-        add_transaction_to_transaction_bank(class_int, transaction_bank, temp_moves, in_count, out_count, gas_fee_fiat, transaction_time, 'binance', transaction_hash, currency)
+        add_transaction_to_transaction_bank(class_int, transaction_bank, temp_moves, in_count, out_count, gas_fee_fiat, transaction_time, 'binance', transaction_hash, currency, silent_income)
 
         # mark transaction hash as processed
         processed_transaction_hashes.append(transaction_hash)
