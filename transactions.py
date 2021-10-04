@@ -322,102 +322,42 @@ def get_token_price(token, token_contract_address, transaction_time, chain, orig
             store_token_price(token, transaction_time, price_estimate)
             return price_estimate
 
-    print(f"Estimating price for {token} from preceding transactions...")
-    print("Trying method 1...")
-
-    api_domains = {'ethereum': 'api.etherscan.io', 'polygon': 'api.polygonscan.com', 'bsc': 'api.bscscan.com', 'ftmscan': 'api.ftmscan.com'}
-
-    # get latest block before provided time
-    api_key = get_api_keys()[chain]
-    block = int(requests.get(f"https://{api_domains[chain]}/api?module=block&action=getblocknobytime&timestamp={epoch_time}&closest=before&apikey={api_key}").json()['result'])
-
-    # get transactions prior to block above
-    result = requests.get(f"https://{api_domains[chain]}/api?module=account&action=txlist&address={token_contract_address}&startblock=1&endblock={block}&sort=desc&apikey={api_key}").json()['result']
-
-    # get transaction hashes for non-approval transactions
-    transaction_hashes = [transaction['hash'] for transaction in result if transaction['input'][:10] != '0x095ea7b3']
-
-    # iterate through transaction hashes until 10 appropriate transactions are found and add values to lists
     price_estimates = []
-    printProgressBar(0, 10, prefix='Price estimates found:', suffix='Complete', length=10)
-    progress = 0
-    for ind, transaction_hash in enumerate(transaction_hashes):
-        # break once you have 10 transactions
-        if len(price_estimates) >= 10:
-            break
+    print(f"Estimating price for {token} from other transactions...")
+    method1 = input(f"Would you like to try method 1? (y/N) ")
+    if method1.lower() == 'y':
+        api_domains = {'ethereum': 'api.etherscan.io', 'polygon': 'api.polygonscan.com', 'bsc': 'api.bscscan.com', 'ftmscan': 'api.ftmscan.com'}
 
-        # get price from transaction
-        price_estimate = get_estimated_price_from_transaction(transaction_hash, token, chain, currency)
+        # get latest block before provided time
+        api_key = get_api_keys()[chain]
+        block = int(requests.get(f"https://{api_domains[chain]}/api?module=block&action=getblocknobytime&timestamp={epoch_time}&closest=before&apikey={api_key}").json()['result'])
 
-        if price_estimate:
-            price_estimates.append(price_estimate)
-            progress += 1
-            printProgressBar(progress, 10, prefix='Price estimates found:', suffix='Complete', length=10)
+        # get transactions prior to block above
+        result = requests.get(f"https://{api_domains[chain]}/api?module=account&action=txlist&address={token_contract_address}&startblock=1&endblock={block}&sort=desc&apikey={api_key}").json()['result']
 
-    print("")
-    if len(price_estimates) >= 10:
-        # get average of middle 6 price estimates
-        price_estimates.sort()
-        print(f"6 price estimates to average: {price_estimates[2:8]}")
-        average_price = sum(price_estimates[2:8]) / 6
-        print(f"Estimated price is {average_price}")
-        token_price = average_price
-        store_token_price(token, transaction_time, token_price)
-        return token_price
+        # get transaction hashes for non-approval transactions
+        transaction_hashes = [transaction['hash'] for transaction in result if transaction['input'][:10] != '0x095ea7b3']
 
-    print("Trying method 2...")
-    # look at recent (current day) transactions to find the addresses most commonly involved in swaps of that token
-    swap_addresses = find_common_swap_addresses(token, token_contract_address, chain, currency)
-    print(swap_addresses)
-
-    for page in range(1, 11):
-        if page > 1:
-            keep_looking = input(f"Only {len(price_estimates)}/10 price estimates found so far, continue looking? If not you can manually enter the price. (Y/n) ")
-            if keep_looking.lower() == 'n':
+        # iterate through transaction hashes until 10 appropriate transactions are found and add values to lists
+        price_estimates = []
+        printProgressBar(0, 10, prefix='Price estimates found:', suffix='Complete', length=10)
+        progress = 0
+        for ind, transaction_hash in enumerate(transaction_hashes):
+            # break once you have 10 transactions
+            if len(price_estimates) >= 10:
                 break
-        for swap_address in swap_addresses:
-            # get transactions prior to block above for each of the swap addresses
-            # TODO: try tokentx
-            result = \
-            requests.get(f"https://{api_domains[chain]}/api?module=account&action=txlist&address={swap_address}&startblock=1&endblock={block}&page={page}&offset=10000&sort=desc&apikey={api_key}").json()[
-                'result']
 
-            if not result:
-                continue
+            # get price from transaction
+            price_estimate = get_estimated_price_from_transaction(transaction_hash, token, chain, currency)
 
-            # get transaction hashes for non-approval transactions
-            print("Finding relevant transaction hashes")
-            transaction_hashes = []
-            for transaction in result:
-                if transaction['input'][:10] != '0x095ea7b3':
-                    if token_contract_address.lower()[2:] in transaction['input'][2:]:
-                        transaction_hashes.append(transaction['hash'])
-            print(f"Found {len(transaction_hashes)} relevant transaction hashes out of {len(result)} total")
+            if price_estimate:
+                price_estimates.append(price_estimate)
+                progress += 1
+                printProgressBar(progress, 10, prefix='Price estimates found:', suffix='Complete', length=10)
 
-            if len(transaction_hashes) == 0:
-                continue
-
-            # iterate through transaction hashes until 10 appropriate transactions are found and add values to lists
-            price_estimates = []
-            printProgressBar(0, 10, prefix='Price estimates found:', suffix='Complete', length=10)
-            progress = 0
-            for ind, transaction_hash in enumerate(transaction_hashes):
-                # break once you have 10 transactions
-                if len(price_estimates) >= 10:
-                    break
-
-                # get price from transaction
-                price_estimate = get_estimated_price_from_transaction(transaction_hash, token, chain, currency)
-
-                if price_estimate:
-                    price_estimates.append(price_estimate)
-                    progress += 1
-                    printProgressBar(progress, 10, prefix='Price estimates found:', suffix='Complete', length=10)
-
-            print("")
-
+        print("")
         if len(price_estimates) >= 10:
-            # get average of middle 10 price estimates
+            # get average of middle 6 price estimates
             price_estimates.sort()
             print(f"6 price estimates to average: {price_estimates[2:8]}")
             average_price = sum(price_estimates[2:8]) / 6
@@ -425,6 +365,68 @@ def get_token_price(token, token_contract_address, transaction_time, chain, orig
             token_price = average_price
             store_token_price(token, transaction_time, token_price)
             return token_price
+
+    method2 = input(f"Would you like to try method 2? (y/N) ")
+    if method2.lower() == 'y':
+        # look at recent (current day) transactions to find the addresses most commonly involved in swaps of that token
+        swap_addresses = find_common_swap_addresses(token, token_contract_address, chain, currency)
+        print(swap_addresses)
+
+        for page in range(1, 11):
+            if page > 1:
+                keep_looking = input(f"Only {len(price_estimates)}/10 price estimates found so far, continue looking? If not you can manually enter the price. (Y/n) ")
+                if keep_looking.lower() == 'n':
+                    break
+            for swap_address in swap_addresses:
+                # get transactions prior to block above for each of the swap addresses
+                # TODO: try tokentx
+                result = \
+                requests.get(f"https://{api_domains[chain]}/api?module=account&action=txlist&address={swap_address}&startblock=1&endblock={block}&page={page}&offset=10000&sort=desc&apikey={api_key}").json()[
+                    'result']
+
+                if not result:
+                    continue
+
+                # get transaction hashes for non-approval transactions
+                print("Finding relevant transaction hashes")
+                transaction_hashes = []
+                for transaction in result:
+                    if transaction['input'][:10] != '0x095ea7b3':
+                        if token_contract_address.lower()[2:] in transaction['input'][2:]:
+                            transaction_hashes.append(transaction['hash'])
+                print(f"Found {len(transaction_hashes)} relevant transaction hashes out of {len(result)} total")
+
+                if len(transaction_hashes) == 0:
+                    continue
+
+                # iterate through transaction hashes until 10 appropriate transactions are found and add values to lists
+                price_estimates = []
+                printProgressBar(0, 10, prefix='Price estimates found:', suffix='Complete', length=10)
+                progress = 0
+                for ind, transaction_hash in enumerate(transaction_hashes):
+                    # break once you have 10 transactions
+                    if len(price_estimates) >= 10:
+                        break
+
+                    # get price from transaction
+                    price_estimate = get_estimated_price_from_transaction(transaction_hash, token, chain, currency)
+
+                    if price_estimate:
+                        price_estimates.append(price_estimate)
+                        progress += 1
+                        printProgressBar(progress, 10, prefix='Price estimates found:', suffix='Complete', length=10)
+
+                print("")
+
+            if len(price_estimates) >= 10:
+                # get average of middle 10 price estimates
+                price_estimates.sort()
+                print(f"6 price estimates to average: {price_estimates[2:8]}")
+                average_price = sum(price_estimates[2:8]) / 6
+                print(f"Estimated price is {average_price}")
+                token_price = average_price
+                store_token_price(token, transaction_time, token_price)
+                return token_price
 
     print('Could not find enough transactions to get an accurate price estimate...')
     if len(price_estimates) > 0:
