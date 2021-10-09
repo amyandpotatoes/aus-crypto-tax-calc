@@ -507,7 +507,7 @@ def get_token_price(token, token_contract_address, transaction_time, chain, orig
     return token_price
 
 
-def get_estimated_price_from_transaction(transaction_hash, token, token_contract_address, chain, currency):
+def get_estimated_price_from_transaction(transaction_hash, token, token_contract_address, chain, currency='aud'):
     # read information about transaction into df
     data_text = get_transaction_by_hash(CHAIN_IDS[chain], transaction_hash)
     try:
@@ -542,27 +542,25 @@ def get_estimated_price_from_transaction(transaction_hash, token, token_contract
     # all tokens are in coingeckoid_lookup, this prevents this code from looping
     # AND there is one incoming and one outgoing token, for simplicity
     # AND one of those tokens is the token in question
+    tmp = [(move['token'].lower() in COINGECKOID_LOOKUP.keys(), move['token'].lower() == token.lower(), retrieve_token_price(move['token'], move['token_contract'], transaction_time, verbose=False)) for move in moves]
+    print(f"temp: {tmp}")
+    print(f"temp: {any([move['token'].lower() == token.lower() for move in moves])}")
     if (not all([(move['token'].lower() in COINGECKOID_LOOKUP.keys()
-                  or move['token'] == token)
+                  or move['token'].lower() == token.lower())
                   or retrieve_token_price(move['token'], move['token_contract'], transaction_time, verbose=False)
                  for move in moves])
-            or not (len(in_moves) == 1 and len(out_moves) == 1)
-            or not any([move['token'] == token for move in moves])):
+            or not any([move['token'].lower() == token.lower() for move in moves])):
+        print("temp: returning none")
         return None
 
-    # if token is incoming, get value of outoging token
-    if any([move['token'].lower() == token.lower() for move in in_moves]):
-        # get value of opposite token, and use this to calculate price per token
-        _, _, _, out_values = get_moves_and_values_by_direction_excluding(out_moves, transaction_time, chain, token, transaction_hash, currency)
-        price_1token = sum(out_values) / in_moves[0]['quantity']
-        return price_1token
-
-    # if token is outgoing, get value of incoming token
-    elif any([move['token'].lower() == token.lower() for move in out_moves]):
-        # get value of opposite token, and use this to calculate price per token
-        _, _, in_values, _ = get_moves_and_values_by_direction_excluding(in_moves, transaction_time, chain, token, transaction_hash, currency)
-        price_1token = sum(in_values) / out_moves[0]['quantity']
-        return price_1token
+    # get value of opposite token, and use this to calculate price per token
+    print("temp: got through")
+    in_moves_excluding, out_moves_excluding, in_values, out_values = get_moves_and_values_by_direction_excluding(moves, transaction_time, chain, token, transaction_hash, currency)
+    value_diff = abs(sum(in_values) - sum(out_values))
+    quantity_diff = abs(sum([move['quantity'] for move in in_moves if move['token'].lower() == token.lower()]) - sum([move['quantity'] for move in out_moves if move['token'].lower() == token.lower()]))
+    price_1token = value_diff / quantity_diff
+    print(f"temp: {value_diff}, {quantity_diff}, {price_1token}")
+    return price_1token
 
 
 def find_common_swap_addresses(token, token_address, chain, currency):
@@ -695,8 +693,13 @@ def get_moves_and_values_by_direction_excluding(moves, transaction_time, chain, 
     direction that each different token represents
     """
     # split tokens into incoming and outgoing
+    print(f"temp: exclude {exclude}")
+    print(f"temp: moves {moves}")
     in_moves = [move for move in moves if (move['direction'] == 'in' and move['token'].lower() != exclude.lower())]
     out_moves = [move for move in moves if (move['direction'] == 'out' and move['token'].lower() != exclude.lower())]
+
+    print(f"temp: {in_moves}")
+    print(f"temp: {out_moves}")
 
     # calculate values
     in_values = []
@@ -711,9 +714,8 @@ def get_moves_and_values_by_direction_excluding(moves, transaction_time, chain, 
         price_total = price_1token * move['quantity']
         out_values.append(price_total)
 
-    # # calculate proportional values, so that if there are multiple ingoing tokens you can work out how much of the outgoing value each is 'swapped for'
-    # in_prop = [val / sum(in_values) for val in in_values]
-    # out_prop = [val / sum(out_values) for val in out_values]
+    print(f"temp: in {in_values}")
+    print(f"temp: out {out_values}")
 
     return in_moves, out_moves, in_values, out_values
 
@@ -1109,7 +1111,7 @@ def read_onchain_transactions(chain, wallet, transaction_bank, processed_transac
 
         # you may not want to process now if the prices will be easier to find after processing future transactions
         # only ask if more than one of the tokens are not in the coingecko lookup dict and not in the previous prices dict
-        if len([True for move in temp_moves if (move['token'] not in COINGECKOID_LOOKUP.keys() and
+        if len([True for move in temp_moves if (move['token'].lower() not in COINGECKOID_LOOKUP.keys() and
                                                 not retrieve_token_price(move['token'], move['token_contract'], transaction_time, verbose=False))]) > 1:
             process_now = input(f"Would you like to process this transaction now? If not, this transaction will be processed later. "
                                 f"(Prices may be easier to determine after processing future transactions) (y/N) ")
