@@ -11,6 +11,7 @@ import pickle
 import glob
 import yaml
 import pprint
+from time import sleep
 import numpy as np
 from enum import Enum, auto
 from pycoingecko import CoinGeckoAPI
@@ -69,6 +70,8 @@ def create_coingecko_id_lookup():
         else:
             lookup[coin['symbol'].lower()].append(coin['id'])
         id_list.append(coin['id'])
+    # I don't know why this isn't in there
+    lookup['bnb'].append('binancecoin')
     return lookup, id_list
 
 
@@ -268,6 +271,10 @@ def select_coingecko_id(token):
             correct_token_id = input(f"\rIs {token_id} the correct token ID for {token.lower()}? (Y/n) ")
             if correct_token_id.lower() == 'n':
                 token_id = select_cgid_from_lookup(token)
+            else:
+                again = input("Do you want to be asked this again for this ticker? (Y/n) ")
+                if again.lower() == 'n':
+                    TICKERS_NO_CONFIRM.append(token.lower())
         else:
             token_id = select_cgid_from_lookup(token)
     return token_id
@@ -331,12 +338,21 @@ def get_token_price(token, token_contract_address, transaction_time, chain, orig
 
         # query the coingecko api here and extract the relevant data
         cg = CoinGeckoAPI()
-        result = cg.get_coin_market_chart_range_by_id(
-            id=token_id,
-            vs_currency=currency,
-            from_timestamp=from_timestamp,
-            to_timestamp=to_timestamp
-        )
+        for i in range(10):
+            try:
+                result = cg.get_coin_market_chart_range_by_id(
+                    id=token_id,
+                    vs_currency=currency,
+                    from_timestamp=from_timestamp,
+                    to_timestamp=to_timestamp
+                )
+                break
+            except requests.exceptions.HTTPError as error:
+                if i == 9:
+                    raise error
+                print("Coingecko API Request error, likely due to too many requests in a short time period.")
+                print("Waiting 1 minute to try again...")
+                sleep(60)
 
         # find the closest time to the time of transaction
         token_price = None  # just in case the is an error
@@ -1058,7 +1074,7 @@ def read_onchain_transactions(chain, wallet, transaction_bank, processed_transac
 
     # get only transactions within date range
     df['block_signed_at'] = pd.to_datetime(df['block_signed_at'], format="%Y-%m-%dT%H:%M:%SZ")
-    df = df[(df['block_signed_at'] >= start_date) & (df['block_signed_at'] <= end_date)]
+    df = df[(df['block_signed_at'] >= start_date) & (df['block_signed_at'] < end_date)]
     df.sort_values(by='block_signed_at', inplace=True)
 
     # fix types
@@ -1199,7 +1215,7 @@ def read_binance_csv(transaction_bank, processed_transaction_hashes, pickle_file
     # binance CSVs only go down to the second, so we need to ensure that we are not putting multiple transactions together
     temp_transaction = []
     for index, row in df.iterrows():
-        if start_date <= row['UTC_Time'] <= end_date:
+        if start_date <= row['UTC_Time'] < end_date:
             # check whether we've had this time already - if not this is a new transaction
             if row['UTC_Time'] not in [r['UTC_Time'] for _, r, _ in temp_transaction] and len(temp_transaction) > 0:
                 transaction_list.append(temp_transaction)
@@ -1215,7 +1231,7 @@ def read_binance_csv(transaction_bank, processed_transaction_hashes, pickle_file
                 temp_transaction.append((row['Operation'], row, index))
             else:
                 raise Exception(f"Function read_binance_csv cannot handle the operation {row['Operation']}, code changes will need to be made to handle this.")
-
+    else:
         transaction_list.append(temp_transaction)
 
     skip = input(f"Would you like to skip confirmation for income transactions? (y/N) ")
@@ -1293,9 +1309,10 @@ def read_all_transactions():
     start_date = get_user_input(f"Enter the start date: (YYYY-MM-DD) ", 'date')
     start_tz = get_user_input(f"What timezone is this date in, as an offset from UTC? (eg. +10, -9 etc.) ", 'int')
     start_date -= datetime.timedelta(hours=start_tz)
-    end_date = get_user_input(f"Enter the end date: (YYYY-MM-DD) ", 'date')
+    end_date = get_user_input(f"Enter the end date (inclusive): (YYYY-MM-DD) ", 'date')
     end_tz = get_user_input(f"What timezone is this date in, as an offset from UTC? (eg. +10, -9 etc.) ", 'int')
     end_date -= datetime.timedelta(hours=end_tz)
+    end_date += datetime.timedelta(days=1)
 
     process = input(f"Would you like to process Binance transactions? (Y/n) ")
     if process.lower() != "n":
