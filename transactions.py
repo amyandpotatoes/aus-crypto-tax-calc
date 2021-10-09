@@ -543,23 +543,18 @@ def get_estimated_price_from_transaction(transaction_hash, token, token_contract
     # AND there is one incoming and one outgoing token, for simplicity
     # AND one of those tokens is the token in question
     tmp = [(move['token'].lower() in COINGECKOID_LOOKUP.keys(), move['token'].lower() == token.lower(), retrieve_token_price(move['token'], move['token_contract'], transaction_time, verbose=False)) for move in moves]
-    print(f"temp: {tmp}")
-    print(f"temp: {any([move['token'].lower() == token.lower() for move in moves])}")
     if (not all([(move['token'].lower() in COINGECKOID_LOOKUP.keys()
                   or move['token'].lower() == token.lower())
                   or retrieve_token_price(move['token'], move['token_contract'], transaction_time, verbose=False)
                  for move in moves])
             or not any([move['token'].lower() == token.lower() for move in moves])):
-        print("temp: returning none")
         return None
 
     # get value of opposite token, and use this to calculate price per token
-    print("temp: got through")
     in_moves_excluding, out_moves_excluding, in_values, out_values = get_moves_and_values_by_direction_excluding(moves, transaction_time, chain, token, transaction_hash, currency)
     value_diff = abs(sum(in_values) - sum(out_values))
     quantity_diff = abs(sum([move['quantity'] for move in in_moves if move['token'].lower() == token.lower()]) - sum([move['quantity'] for move in out_moves if move['token'].lower() == token.lower()]))
     price_1token = value_diff / quantity_diff
-    print(f"temp: {value_diff}, {quantity_diff}, {price_1token}")
     return price_1token
 
 
@@ -693,13 +688,8 @@ def get_moves_and_values_by_direction_excluding(moves, transaction_time, chain, 
     direction that each different token represents
     """
     # split tokens into incoming and outgoing
-    print(f"temp: exclude {exclude}")
-    print(f"temp: moves {moves}")
     in_moves = [move for move in moves if (move['direction'] == 'in' and move['token'].lower() != exclude.lower())]
     out_moves = [move for move in moves if (move['direction'] == 'out' and move['token'].lower() != exclude.lower())]
-
-    print(f"temp: {in_moves}")
-    print(f"temp: {out_moves}")
 
     # calculate values
     in_values = []
@@ -713,9 +703,6 @@ def get_moves_and_values_by_direction_excluding(moves, transaction_time, chain, 
         price_1token = get_token_price(move['token'], move['token_contract'], transaction_time, chain, transaction_hash, currency)
         price_total = price_1token * move['quantity']
         out_values.append(price_total)
-
-    print(f"temp: in {in_values}")
-    print(f"temp: out {out_values}")
 
     return in_moves, out_moves, in_values, out_values
 
