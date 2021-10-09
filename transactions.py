@@ -288,7 +288,7 @@ def select_coingecko_id(token):
     return token_id
 
 
-def get_token_price(token, token_contract_address, transaction_time, chain, original_transaction_hash, currency='aud'):
+def get_token_price(token, token_contract_address, transaction_time, chain, original_transaction_hash, original_moves, currency='aud'):
     """
     Get the price of a token, using either the coingecko API or if that's not available, an average of recent
     transactions (with removal of outliers).
@@ -380,7 +380,7 @@ def get_token_price(token, token_contract_address, transaction_time, chain, orig
 
     # else use manual price method
     print(f"Estimating price for {token} from other tokens in transaction...")
-    price_estimate = get_estimated_price_from_transaction(original_transaction_hash, token, token_contract_address, chain, currency)
+    price_estimate = get_estimated_price_from_transaction(original_transaction_hash, token, token_contract_address, chain, original_moves, transaction_time, currency)
     if not price_estimate:
         print(f"Could not estimate price from other tokens, trying other methods...")
     else:
@@ -417,7 +417,7 @@ def get_token_price(token, token_contract_address, transaction_time, chain, orig
                 break
 
             # get price from transaction
-            price_estimate = get_estimated_price_from_transaction(transaction_hash, token, token_contract_address, chain, currency)
+            price_estimate = get_estimated_price_from_transaction(transaction_hash, token, token_contract_address, chain, None, None, currency)
 
             if price_estimate:
                 price_estimates.append(price_estimate)
@@ -478,7 +478,7 @@ def get_token_price(token, token_contract_address, transaction_time, chain, orig
                         break
 
                     # get price from transaction
-                    price_estimate = get_estimated_price_from_transaction(transaction_hash, token, token_contract_address, chain, currency)
+                    price_estimate = get_estimated_price_from_transaction(transaction_hash, token, token_contract_address, chain, None, None, currency)
 
                     if price_estimate:
                         price_estimates.append(price_estimate)
@@ -507,32 +507,37 @@ def get_token_price(token, token_contract_address, transaction_time, chain, orig
     return token_price
 
 
-def get_estimated_price_from_transaction(transaction_hash, token, token_contract_address, chain, currency='aud'):
-    # read information about transaction into df
-    data_text = get_transaction_by_hash(CHAIN_IDS[chain], transaction_hash)
-    try:
-        df = pd.read_csv(StringIO(data_text), dtype=str)
-    except pd.errors.ParserError:
-        return None
+def get_estimated_price_from_transaction(transaction_hash, token, token_contract_address, chain, original_moves, original_time, currency='aud'):
+    # if we have the original moves, no need to read in
+    if not original_moves:
+        # read information about transaction into df
+        data_text = get_transaction_by_hash(CHAIN_IDS[chain], transaction_hash)
+        try:
+            df = pd.read_csv(StringIO(data_text), dtype=str)
+        except pd.errors.ParserError:
+            return None
 
-    if (len(df.index) == 0) or 'log_events_decoded_signature' not in df.columns or 'log_events_decoded_signature' not in df.columns:
-        return None
+        if (len(df.index) == 0) or 'log_events_decoded_signature' not in df.columns or 'log_events_decoded_signature' not in df.columns:
+            return None
 
-    # parse times
-    df['block_signed_at'] = pd.to_datetime(df['block_signed_at'], format="%Y-%m-%dT%H:%M:%SZ")
+        # parse times
+        df['block_signed_at'] = pd.to_datetime(df['block_signed_at'], format="%Y-%m-%dT%H:%M:%SZ")
 
-    # get token transfers associated with hash
-    transaction_df = df[(df['tx_hash'] == transaction_hash)
-                        & (df["log_events_decoded_signature"] == "Transfer(indexed address from, indexed address to, uint256 value)")]
+        # get token transfers associated with hash
+        transaction_df = df[(df['tx_hash'] == transaction_hash)
+                            & (df["log_events_decoded_signature"] == "Transfer(indexed address from, indexed address to, uint256 value)")]
 
-    if len(transaction_df.index) == 0:
-        return None
+        if len(transaction_df.index) == 0:
+            return None
 
-    # get wallet that triggered transaction
-    wallet = transaction_df['from_address'].iloc[0]
+        # get wallet that triggered transaction
+        wallet = transaction_df['from_address'].iloc[0]
 
-    # parse transactions into 'moves'
-    transaction_time, moves, gas_fee_fiat = parse_onchain_transactions(chain, wallet, transaction_df, transaction_hash, currency, True)
+        # parse transactions into 'moves'
+        transaction_time, moves, gas_fee_fiat = parse_onchain_transactions(chain, wallet, transaction_df, transaction_hash, currency, True)
+    else:
+        moves = original_moves
+        transaction_time = original_time
 
     # get moves in each direction
     in_moves = [move for move in moves if move['direction'] == 'in']
@@ -649,12 +654,12 @@ def get_moves_and_values_by_direction(moves, transaction_time, chain, transactio
     in_values = []
     out_values = []
     for move in in_moves:
-        price_1token = get_token_price(move['token'], move['token_contract'], transaction_time, chain, transaction_hash, currency)
+        price_1token = get_token_price(move['token'], move['token_contract'], transaction_time, chain, transaction_hash, moves, currency)
         price_total = price_1token * move['quantity']
         in_values.append(price_total)
 
     for move in out_moves:
-        price_1token = get_token_price(move['token'], move['token_contract'], transaction_time, chain, transaction_hash, currency)
+        price_1token = get_token_price(move['token'], move['token_contract'], transaction_time, chain, transaction_hash, moves, currency)
         price_total = price_1token * move['quantity']
         out_values.append(price_total)
 
@@ -695,12 +700,12 @@ def get_moves_and_values_by_direction_excluding(moves, transaction_time, chain, 
     in_values = []
     out_values = []
     for move in in_moves:
-        price_1token = get_token_price(move['token'], move['token_contract'], transaction_time, chain, transaction_hash, currency)
+        price_1token = get_token_price(move['token'], move['token_contract'], transaction_time, chain, transaction_hash, moves, currency)
         price_total = price_1token * move['quantity']
         in_values.append(price_total)
 
     for move in out_moves:
-        price_1token = get_token_price(move['token'], move['token_contract'], transaction_time, chain, transaction_hash, currency)
+        price_1token = get_token_price(move['token'], move['token_contract'], transaction_time, chain, transaction_hash, moves, currency)
         price_total = price_1token * move['quantity']
         out_values.append(price_total)
 
@@ -921,7 +926,7 @@ def parse_onchain_transactions(chain, wallet, df, transaction_hash, currency='au
     transaction_df['gas_spent'] = pd.to_numeric(transaction_df['gas_spent'], errors='coerce')
     transaction_df['gas_price'] = pd.to_numeric(transaction_df['gas_price'], errors='coerce')
     gas_fee_native_token = max(transaction_df['gas_spent'] * transaction_df['gas_price'] / 1e18)
-    gas_fee_fiat = gas_fee_native_token * get_token_price(NATIVE_TOKEN[chain], None, transaction_time, chain, transaction_hash, currency)
+    gas_fee_fiat = gas_fee_native_token * get_token_price(NATIVE_TOKEN[chain], None, transaction_time, chain, transaction_hash, None, currency)
 
     # get incoming tokens from token transfers
     in_mask = (transaction_df['log_events_decoded_signature'] == 'Transfer(indexed address from, indexed address to, uint256 value)') \
@@ -1137,7 +1142,7 @@ def parse_and_classify_binance_transaction(transaction, transaction_time, transa
             in_count += 1
             class_int = 6
         elif op.lower() in ['fee', 'commission fee shared with you']:
-            gas_fee_fiat += -1 * row['Change'] * get_token_price(row['Coin'], None, transaction_time, 'binance', transaction_hash, currency)
+            gas_fee_fiat += -1 * row['Change'] * get_token_price(row['Coin'], None, transaction_time, 'binance', transaction_hash, None, currency)
         elif row['Change'] > 0:
             temp_moves.append({'token': row['Coin'],
                                'token_contract': None,
@@ -1163,7 +1168,7 @@ def parse_and_classify_binance_transaction(transaction, transaction_time, transa
                                    'direction': 'in',
                                    'quantity': row['Change']})
             elif op.lower() in ['fee', 'commission fee shared with you'] and row['Change'] < 0:
-                gas_fee_fiat += -1 * row['Change'] * get_token_price(row['Coin'], None, transaction_time, 'binance', transaction_hash, currency)
+                gas_fee_fiat += -1 * row['Change'] * get_token_price(row['Coin'], None, transaction_time, 'binance', transaction_hash, None, currency)
 
     changes = 'y'
     while changes.lower() == 'y':
