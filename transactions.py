@@ -159,8 +159,8 @@ def correct_transaction_classification(class_guess):
     print("Classification choices: ")
     for i in range(1, len(CLASSIFICATIONS) + 1):
         print(f"{i}. {CLASSIFICATIONS[i]}")
-    class_correct = input(f"This looks like {class_guess}, is it? (Y/n): ")
-    if class_correct.lower() == 'n':
+    class_correct = input(f"This looks like {class_guess}, is it? (y/N): ")
+    if class_correct.lower() != 'y':
         class_int = get_user_input("Which is the correct classification number? (#) ", 'int')
     else:
         class_int = None
@@ -192,12 +192,12 @@ def printProgressBar (iteration, total, prefix='', suffix='', decimals=1, length
 
 def store_token_price(token, token_hash, time, price):
     if token.lower() == 'cake-lp':
-        if token in PREVIOUS_PRICES:
+        if token.lower() in PREVIOUS_PRICES.keys():
             PREVIOUS_PRICES[(token, token_hash)][time] = price
         else:
             PREVIOUS_PRICES[(token, token_hash)] = {time: price}
     else:
-        if token in PREVIOUS_PRICES:
+        if token.lower() in PREVIOUS_PRICES.keys():
             PREVIOUS_PRICES[token][time] = price
         else:
             PREVIOUS_PRICES[token] = {time: price}
@@ -205,30 +205,38 @@ def store_token_price(token, token_hash, time, price):
 
 def retrieve_token_price(token, token_hash, time, verbose=True):
     prices = []
-    if (token, token_hash) in PREVIOUS_PRICES.keys():
-        for prev_time in PREVIOUS_PRICES[(token, token_hash)].keys():
-            if time-datetime.timedelta(hours=24) <= prev_time <= time+datetime.timedelta(hours=24):
-                prices.append((abs(time-prev_time), prev_time))
-        if len(prices) == 0:
-            return None
-        else:
-            (_, closest_time) = min(prices)
-        if verbose:
-            if token.lower() == 'cake-lp':
+    if token.lower() == 'cake-lp':
+        if (token, token_hash) in PREVIOUS_PRICES.keys():
+            for prev_time in PREVIOUS_PRICES[(token, token_hash)].keys():
+                if time-datetime.timedelta(hours=24) <= prev_time <= time+datetime.timedelta(hours=24):
+                    prices.append((abs(time-prev_time), prev_time))
+            if len(prices) == 0:
+                return None
+            else:
+                (_, closest_time) = min(prices)
+            if verbose:
                 print(f"We previously found that the price per token for {token}({token_hash}) at {closest_time} was {PREVIOUS_PRICES[(token, token_hash)][closest_time]}.")
                 assume = input(f"Would you like to assume the price at {time} was the same? (Y/n) ")
                 if assume.lower() == 'n':
                     return None
+            return PREVIOUS_PRICES[(token, token_hash)][prev_time]
+        return None
+    else:
+        if token in PREVIOUS_PRICES.keys():
+            for prev_time in PREVIOUS_PRICES[token].keys():
+                if time-datetime.timedelta(hours=24) <= prev_time <= time+datetime.timedelta(hours=24):
+                    prices.append((abs(time-prev_time), prev_time))
+            if len(prices) == 0:
+                return None
             else:
-                print(f"We previously found that the price per token for {token}({token_hash}) at {closest_time} was {PREVIOUS_PRICES[token][closest_time]}.")
+                (_, closest_time) = min(prices)
+            if verbose:
+                print(f"We previously found that the price per token for {token} at {closest_time} was {PREVIOUS_PRICES[token][closest_time]}.")
                 assume = input(f"Would you like to assume the price at {time} was the same? (Y/n) ")
                 if assume.lower() == 'n':
                     return None
-        if token.lower() == 'cake-lp':
-            return PREVIOUS_PRICES[(token, token_hash)][prev_time]
-        else:
             return PREVIOUS_PRICES[token][prev_time]
-    return None
+        return None
 
 
 def select_cgid_from_lookup(token):
@@ -378,8 +386,8 @@ def get_token_price(token, token_contract_address, transaction_time, chain, orig
     else:
         print(f"Estimated price per token of {token} is {price_estimate} {currency.upper()}.")
         use_price = input(f"Are you confident this is the correct price? "
-                          f"If not, further price estimation will be used and you can manually enter a price if they are not successful. (y/N) ")
-        if use_price.lower() == "y":
+                          f"If not, further price estimation will be used and you can manually enter a price if they are not successful. (Y/n) ")
+        if use_price.lower() != "n":
             store_token_price(token, token_contract_address, transaction_time, price_estimate)
             return price_estimate
 
@@ -534,10 +542,9 @@ def get_estimated_price_from_transaction(transaction_hash, token, token_contract
     # all tokens are in coingeckoid_lookup, this prevents this code from looping
     # AND there is one incoming and one outgoing token, for simplicity
     # AND one of those tokens is the token in question
-    retrieved_price = retrieve_token_price(token, token_contract_address, transaction_time)
     if (not all([(move['token'].lower() in COINGECKOID_LOOKUP.keys()
                   or move['token'] == token)
-                  or retrieve_token_price(move['token'], move['token_contract_address'], transaction_time, verbose=False)
+                  or retrieve_token_price(move['token'], move['token_contract'], transaction_time, verbose=False)
                  for move in moves])
             or not (len(in_moves) == 1 and len(out_moves) == 1)
             or not any([move['token'] == token for move in moves])):
@@ -1085,7 +1092,8 @@ def read_onchain_transactions(chain, wallet, transaction_bank, processed_transac
     transaction_hashes = list(dict.fromkeys(df['tx_hash']))
 
     # iterate through transaction hashes, parsing them and adding transactions to transaction bank
-    for transaction_hash in transaction_hashes:
+    while len(transaction_hashes) > 0:
+        transaction_hash = transaction_hashes.pop(0)
         if transaction_hash in processed_transaction_hashes:
             continue
         transaction_df = df[(df['tx_hash'] == transaction_hash)
@@ -1098,6 +1106,15 @@ def read_onchain_transactions(chain, wallet, transaction_bank, processed_transac
         transaction_time = transaction_df['block_signed_at'].iloc[0]
         print(f"Transaction time: {transaction_time}")
         transaction_time, temp_moves, gas_fee_fiat = parse_onchain_transactions(chain, wallet, df, transaction_hash, currency)
+
+        # you may not want to process now if the prices will be easier to find after processing future transactions
+        # only ask if more than one of the tokens are not in the coingecko lookup dict and not in the previous prices dict
+        if len([True for move in temp_moves if (move['token'] not in COINGECKOID_LOOKUP.keys() and
+                                                not retrieve_token_price(move['token'], move['token_contract'], transaction_time, verbose=False))]) > 1:
+            process_now = input(f"Would you like to process this transaction now? (Prices may be easier to determine after processing future transactions) (y/N) ")
+            if process_now.lower() != 'y':
+                transaction_hashes.append(transaction_hash)
+                continue
 
         # attempt to classify and check with user
         class_int, in_count, out_count = classify_transaction(temp_moves, currency)
