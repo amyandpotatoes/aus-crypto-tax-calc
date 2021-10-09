@@ -40,10 +40,6 @@ CLASSIFICATIONS = {1: 'Buy + Sell',
                    8: 'Taxable Gift',
                    9: 'Non-taxable'}
 
-# customised token ticker to coingecko ID lookup dictionary
-# used for when the main dictionary doesn't find the correct token, usually due to ticker collisions
-CUSTOM_COINGECKOID_LOOKUP = dict()
-
 # list of tickers not to confirm
 TICKERS_NO_CONFIRM = []
 COINGECKO_NO_CONFIRM = []
@@ -69,13 +65,17 @@ def create_coingecko_id_lookup():
     id_list = []
     for coin in coin_list:
         if coin['symbol'] not in lookup.keys():
-            lookup[coin['symbol'].lower()] = coin['id']
+            lookup[coin['symbol'].lower()] = [coin['id']]
+        else:
+            lookup[coin['symbol'].lower()].append(coin['id'])
         id_list.append(coin['id'])
     return lookup, id_list
 
 
 # create coingecko lookup table
 COINGECKOID_LOOKUP, COINGECKOID_LIST = create_coingecko_id_lookup()
+# create a dict of user selected coingeckoIDs, it is ticker: id
+COINGECKOID_USER_SELECTIONS = dict()
 
 
 class Transaction:
@@ -228,6 +228,51 @@ def retrieve_token_price(token, token_hash, time, verbose=True):
     return None
 
 
+def select_cgid_from_lookup(token):
+    if token.lower() in COINGECKOID_LOOKUP.keys():
+        if len(COINGECKOID_LOOKUP[token.lower()]) == 1:
+            token_id = COINGECKOID_LOOKUP[token.lower()][0]
+            correct_token_id = input(f"\rIs {token_id} the correct token ID for {token.lower()}? (Y/n) ")
+            if correct_token_id.lower() == 'n':
+                token_id = input(f"\rWhat is the correct coingecko token ID? (Search token in cg and use coin name in URL) ")
+            COINGECKOID_USER_SELECTIONS[token.lower()] = token_id
+            again = input("Do you want to be asked this again for this ticker? (Y/n) ")
+            if again.lower() == 'n':
+                TICKERS_NO_CONFIRM.append(token.lower())
+        else:
+            print("Possible coingecko IDs:")
+            for ind, id in enumerate(COINGECKOID_LOOKUP[token.lower()]):
+                print(f"{ind + 1}. {id}")
+            print(f"{ind + 2}. None of the above")
+            correct_id = get_user_input("Which is the correct coingecko ID? (#) ", 'int')
+            if correct_id >= ind + 2 or correct_id <= 0:
+                token_id = None
+            else:
+                token_id = COINGECKOID_LOOKUP[token.lower()][correct_id - 1]
+                COINGECKOID_USER_SELECTIONS[token.lower()] = token_id
+                again = input("Do you want to be asked this again for this ticker? (Y/n) ")
+                if again.lower() == 'n':
+                    TICKERS_NO_CONFIRM.append(token.lower())
+    else:
+        token_id = None
+    return token_id
+
+
+def select_coingecko_id(token):
+    # convert token ticker to coingecko token ID
+    if token.lower() in TICKERS_NO_CONFIRM and token.lower() in COINGECKOID_USER_SELECTIONS.keys():
+        token_id = COINGECKOID_USER_SELECTIONS[token.lower()]
+    else:
+        if token.lower() in COINGECKOID_USER_SELECTIONS.keys():
+            token_id = COINGECKOID_USER_SELECTIONS[token.lower()]
+            correct_token_id = input(f"\rIs {token_id} the correct token ID for {token.lower()}? (Y/n) ")
+            if correct_token_id.lower() == 'n':
+                token_id = select_cgid_from_lookup(token)
+        else:
+            token_id = select_cgid_from_lookup(token)
+    return token_id
+
+
 def get_token_price(token, token_contract_address, transaction_time, chain, original_transaction_hash, currency='aud'):
     """
     Get the price of a token, using either the coingecko API or if that's not available, an average of recent
@@ -266,22 +311,7 @@ def get_token_price(token, token_contract_address, transaction_time, chain, orig
                 break
 
         if (use_coingecko.lower() != 'n') and (token.lower() not in NOCOINGECKO_NO_CONFIRM):
-            # convert token ticker to coingecko token ID
-            if token.lower() in CUSTOM_COINGECKOID_LOOKUP.keys():
-                token_id = CUSTOM_COINGECKOID_LOOKUP.get(token.lower())
-            else:
-                token_id = COINGECKOID_LOOKUP.get(token.lower())
-
-            if token_id is not None:  # if token ID is found
-                # check if correct token was found
-                if token.lower() not in TICKERS_NO_CONFIRM:
-                    correct_token_id = input(f"\rIs {token_id} the correct token ID for {token.lower()}? (Y/n) ")
-                    if correct_token_id.lower() == 'n':
-                        token_id = input(f"\rWhat is the correct coingecko token ID? (Search token in cg and use coin name in URL) ")
-                        CUSTOM_COINGECKOID_LOOKUP[token.lower()] = token_id
-                    again = input("Do you want to be asked this again for this ticker? (Y/n) ")
-                    if again.lower() == 'n':
-                        TICKERS_NO_CONFIRM.append(token.lower())
+            token_id = select_coingecko_id(token)
 
             if token_id not in COINGECKOID_LIST:
                 print(f'Token ID {token_id} is not a valid coingecko ID. Enter a different token ID or opt to use manual on-chain price calculation.')
@@ -724,7 +754,7 @@ def add_transactions_no_opposite(transaction_bank, self_moves, self_count, self_
         temp_transaction = Transaction(transaction_time, transaction_type, move['token'], move['quantity'] * taxable_prop, gas_fee_fiat / self_count, raw_price_1token,
                                        price_inc_fee_1token)
         print(vars(temp_transaction))
-        if silent_income:
+        if not silent_income:
             _ = input('Adding above transaction... (Press enter to continue)')
         if move['token'].lower() == 'cake-lp':
             if move['token'] in transaction_bank:
@@ -1135,6 +1165,9 @@ def parse_and_classify_binance_transaction(transaction, transaction_time, transa
                                        'token_contract': token_contract,
                                        'direction': direction,
                                        'quantity': quantity})
+        else:
+            changes = 'n'
+            break
 
     return temp_moves, gas_fee_fiat, class_int, in_count, out_count
 
@@ -1183,10 +1216,10 @@ def read_binance_csv(transaction_bank, processed_transaction_hashes, pickle_file
             else:
                 raise Exception(f"Function read_binance_csv cannot handle the operation {row['Operation']}, code changes will need to be made to handle this.")
 
-    transaction_list.append(temp_transaction)
+        transaction_list.append(temp_transaction)
 
     skip = input(f"Would you like to skip confirmation for income transactions? (y/N) ")
-    if skip.lower == 'y':
+    if skip.lower() == 'y':
         silent_income = True
     else:
         silent_income = False
