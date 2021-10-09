@@ -1111,7 +1111,8 @@ def read_onchain_transactions(chain, wallet, transaction_bank, processed_transac
         # only ask if more than one of the tokens are not in the coingecko lookup dict and not in the previous prices dict
         if len([True for move in temp_moves if (move['token'] not in COINGECKOID_LOOKUP.keys() and
                                                 not retrieve_token_price(move['token'], move['token_contract'], transaction_time, verbose=False))]) > 1:
-            process_now = input(f"Would you like to process this transaction now? (Prices may be easier to determine after processing future transactions) (y/N) ")
+            process_now = input(f"Would you like to process this transaction now? If not, this transaction will be processed later. "
+                                f"(Prices may be easier to determine after processing future transactions) (y/N) ")
             if process_now.lower() != 'y':
                 transaction_hashes.append(transaction_hash)
                 continue
