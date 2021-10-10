@@ -63,5 +63,7 @@ Next, run the 'transactions.py' module to parse transactions and categorise them
 
 Next, run the 'tax.py' module to produce a summary of transactions, capital gains and income.
 
+### Known issues
 
+- BNB sometimes doesn't get parsed correctly when used to make a pancakeswap LP, you'll need to add the BNB manually when the question 'Would you like to make any changes?' is asked
 
