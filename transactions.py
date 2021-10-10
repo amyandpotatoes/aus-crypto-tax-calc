@@ -712,7 +712,7 @@ def get_moves_and_values_by_direction_excluding(moves, transaction_time, chain, 
     return in_moves, out_moves, in_values, out_values
 
 
-def add_transactions_w_opposite(transaction_bank, self_moves, self_props, self_count, opp_values, opp_count, gas_fee_fiat, transaction_time, transaction_type):
+def add_transactions_w_opposite(transaction_bank, self_moves, self_values, self_props, self_count, opp_values, opp_count, gas_fee_fiat, transaction_time, transaction_type):
     """
 
     :param transaction_bank: a dictionary that maps token tickers to a list of transactions involving that token
@@ -730,11 +730,19 @@ def add_transactions_w_opposite(transaction_bank, self_moves, self_props, self_c
     """
     # calculate raw price per token and tax-correct price after fees, and add transactions to transaction bank
     # use out_values to calculate buy price of in tokens and vice versa
-    for move, prop in zip(self_moves, self_props):
+    for move, value, prop in zip(self_moves, self_values, self_props):
         raw_price_1token = sum(opp_values) * prop / move['quantity']
         price_inc_fee_1token = (sum(opp_values) * prop + (gas_fee_fiat / (self_count + opp_count))) / move['quantity']
         temp_transaction = Transaction(transaction_time, transaction_type, move['token'], move['quantity'], (gas_fee_fiat / (self_count + opp_count)), raw_price_1token,
                                        price_inc_fee_1token)
+
+        previously_calced_price = value / move['quantity']
+        if raw_price_1token > previously_calced_price * 1.1 or raw_price_1token < previously_calced_price * 0.9:
+            print(f"WARNING: expected price for {move['token']} considering other tokens is {raw_price_1token} while price calculated from coingecko or manual methods was {previously_calced_price}."
+                  f"\n{raw_price_1token} will be used as the cost base if you continue, and this may be incorrect."
+                  f"\nYou may want to end this program, restart from last save and edit the transaction.")
+            _ = input("(Press enter to continue) ")
+
         print(temp_transaction)
         _ = input('Adding above transaction... (Press enter to continue)')
         if move['token'].lower() == 'cake-lp':
@@ -860,19 +868,19 @@ def add_transaction_to_transaction_bank(class_int, transaction_bank, temp_moves,
         # get values of tokens, used to calculate buy and sell cost bases/prices
         in_moves, out_moves, in_values, out_values, in_prop, out_prop = get_moves_and_values_by_direction(temp_moves, transaction_time, chain, transaction_hash, currency)
         # add transactions with incoming tokens (buys)
-        add_transactions_w_opposite(transaction_bank, in_moves, in_prop, in_count, out_values, out_count, gas_fee_fiat, transaction_time, TransactionType.BUY)
+        add_transactions_w_opposite(transaction_bank, in_moves, in_values, in_prop, in_count, out_values, out_count, gas_fee_fiat, transaction_time, TransactionType.BUY)
         # then add transactions with outgoing tokens (sells)
-        add_transactions_w_opposite(transaction_bank, out_moves, out_prop, out_count, in_values, in_count, gas_fee_fiat, transaction_time, TransactionType.SELL)
+        add_transactions_w_opposite(transaction_bank, out_moves, out_values, out_prop, out_count, in_values, in_count, gas_fee_fiat, transaction_time, TransactionType.SELL)
     elif class_int == 2:  # Buy
         # get values of tokens, used to calculate buy and sell cost bases/prices
         in_moves, out_moves, in_values, out_values, in_prop, out_prop = get_moves_and_values_by_direction(temp_moves, transaction_time, chain, transaction_hash, currency)
         # add transactions with incoming tokens (buys)
-        add_transactions_w_opposite(transaction_bank, in_moves, in_prop, in_count, out_values, out_count, gas_fee_fiat, transaction_time, TransactionType.BUY)
+        add_transactions_w_opposite(transaction_bank, in_moves, in_values, in_prop, in_count, out_values, out_count, gas_fee_fiat, transaction_time, TransactionType.BUY)
     elif class_int == 3:  # Sell
         # get values of tokens, used to calculate buy and sell cost bases/prices
         in_moves, out_moves, in_values, out_values, in_prop, out_prop = get_moves_and_values_by_direction(temp_moves, transaction_time, chain, transaction_hash, currency)
         # then add transactions with outgoing tokens (sells)
-        add_transactions_w_opposite(transaction_bank, out_moves, out_prop, out_count, in_values, in_count, gas_fee_fiat, transaction_time, TransactionType.SELL)
+        add_transactions_w_opposite(transaction_bank, out_moves, out_values, out_prop, out_count, in_values, in_count, gas_fee_fiat, transaction_time, TransactionType.SELL)
     elif class_int == 5:  # Unstaking + Income
         for move in temp_moves:
             print(f"Token: {move}")
