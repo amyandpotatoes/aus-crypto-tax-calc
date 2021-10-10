@@ -72,6 +72,8 @@ def create_coingecko_id_lookup():
         id_list.append(coin['id'])
     # I don't know why this isn't in there
     lookup['bnb'].append('binancecoin')
+    # get rid of the SLP ones so it doesn't confuse sushiswap LPs with SLP the token
+    del lookup['slp']
     return lookup, id_list
 
 
@@ -191,7 +193,7 @@ def printProgressBar (iteration, total, prefix='', suffix='', decimals=1, length
 
 
 def store_token_price(token, token_hash, time, price):
-    if token.lower() == 'cake-lp' or token.lower() == 'slp':
+    if token.lower() == 'cake-lp' or token.lower() == 'slp' or token.lower() == 'wlp':
         if token.lower() in PREVIOUS_PRICES.keys():
             PREVIOUS_PRICES[(token, token_hash)][time] = price
         else:
@@ -205,7 +207,7 @@ def store_token_price(token, token_hash, time, price):
 
 def retrieve_token_price(token, token_hash, time, verbose=True):
     prices = []
-    if token.lower() == 'cake-lp' or token.lower() == 'slp':
+    if token.lower() == 'cake-lp' or token.lower() == 'slp' or token.lower() == 'wlp':
         if (token, token_hash) in PREVIOUS_PRICES.keys():
             for prev_time in PREVIOUS_PRICES[(token, token_hash)].keys():
                 if time-datetime.timedelta(hours=24) <= prev_time <= time+datetime.timedelta(hours=24):
@@ -745,7 +747,7 @@ def add_transactions_w_opposite(transaction_bank, self_moves, self_values, self_
 
         print(temp_transaction)
         _ = input('Adding above transaction... (Press enter to continue)')
-        if move['token'].lower() == 'cake-lp' or move['token'].lower() == 'slp':
+        if move['token'].lower() == 'cake-lp' or move['token'].lower() == 'slp' or move['token'].lower() == 'wlp':
             if move['token'] in transaction_bank:
                 transaction_bank[(move['token'], move['token_contract'])].append(temp_transaction)
             else:
@@ -781,7 +783,7 @@ def add_transactions_no_opposite(transaction_bank, self_moves, self_count, self_
         print(vars(temp_transaction))
         if not silent_income:
             _ = input('Adding above transaction... (Press enter to continue)')
-        if move['token'].lower() == 'cake-lp' or move['token'].lower() == 'slp':
+        if move['token'].lower() == 'cake-lp' or move['token'].lower() == 'slp' or move['token'].lower() == 'wlp':
             if move['token'] in transaction_bank:
                 transaction_bank[(move['token'], move['token_contract'])].append(temp_transaction)
             else:
