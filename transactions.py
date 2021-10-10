@@ -1011,7 +1011,7 @@ def parse_onchain_transactions(chain, wallet, df, transaction_hash, currency='au
     is_native_recipient = (swap_df['log_events_decoded_params_value'][mask].str.lower() == wallet.lower()).all()
 
     # catch those where native token out, something else in
-    if len(swap_df) > 0 and len(in_moves) == 1 and len(out_moves) == 0 and is_native_sender:
+    if len(swap_df) > 0 and 1 <= len(in_moves) <= 2 and len(out_moves) == 0 and is_native_sender:
         mask = (swap_df['log_events_decoded_params_name'] == 'amount1In')
         volume = swap_df['log_events_decoded_params_value'][mask]
         temp_moves.append({'token': NATIVE_TOKEN[chain],
@@ -1020,7 +1020,7 @@ def parse_onchain_transactions(chain, wallet, df, transaction_hash, currency='au
                            'quantity': int(volume) / 1e18})
 
     # catch those where something else out, native token in
-    if len(swap_df) > 0 and len(in_moves) == 0 and len(out_moves) == 1 and is_native_recipient:
+    if len(swap_df) > 0 and len(in_moves) == 0 and 1 <= len(out_moves) <= 2 and is_native_recipient:
         mask = (swap_df['log_events_decoded_params_name'] == 'amount0Out')
         volume = swap_df['log_events_decoded_params_value'][mask]
         temp_moves.append({'token': NATIVE_TOKEN[chain],

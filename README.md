@@ -63,9 +63,5 @@ Next, run the 'transactions.py' module to parse transactions and categorise them
 
 Next, run the 'tax.py' module to produce a summary of transactions, capital gains and income.
 
-### Known Issues
-
-- The parser does not always correctly pick up transfers of BNB (likely other chain native tokens too), this is particularly noticeable using pancakeswap. 
-You will need to choose 'Y' to the question 'Would you like to make any changes?' and add in the BNB manually for now.
 
 
