@@ -126,8 +126,8 @@ class TaxState(FeatureState):
                                                    (self.tax_years[tax_year]['Value'] >= 0)].sum()
 
             # calculate capital losses
-            cap_losses = values[(self.tax_years[tax_year]['Tax Type'] == TaxType.CAPGAINS) &
-                                (self.tax_years[tax_year]['Value'] < 0)].sum()
+            cap_losses = -1 * values[(self.tax_years[tax_year]['Tax Type'] == TaxType.CAPGAINS) &
+                                     (self.tax_years[tax_year]['Value'] < 0)].sum()
 
             # calculate total capital gains as 'discount-ineligible CG - capital losses + 0.5 * (discount-eligible CG - remaining capital losses)
             if cap_losses > discount_ineligible_cap_gains:
