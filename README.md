@@ -66,4 +66,4 @@ Next, run the 'tax.py' module to produce a summary of transactions, capital gain
 ### Known issues
 
 - native tokens (BNB/MATIC etc.) sometimes doesn't get parsed correctly when used to make an LP/swapping using a DEX, you'll need to add the native token manually when the question 'Would you like to make any changes?' is asked
-- sometimes the quantity in a transaction for onchain transactions is way out, delete and create a new entry as above
+- sometimes the quantity in a transaction (usually USDC or USDT?) for onchain transactions is missing 10 zeros, delete and create a new entry as above
