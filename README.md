@@ -65,5 +65,5 @@ Next, run the 'tax.py' module to produce a summary of transactions, capital gain
 
 ### Known issues
 
-- BNB sometimes doesn't get parsed correctly when used to make a pancakeswap LP, you'll need to add the BNB manually when the question 'Would you like to make any changes?' is asked
-
+- native tokens (BNB/MATIC etc.) sometimes doesn't get parsed correctly when used to make an LP/swapping using a DEX, you'll need to add the native token manually when the question 'Would you like to make any changes?' is asked
+- sometimes the quantity in a transaction for onchain transactions is way out, delete and create a new entry as above
