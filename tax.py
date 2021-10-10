@@ -41,18 +41,18 @@ class TaxState(FeatureState):
     def process_buy(self, transaction):
         # add bought tokens to holdings, so that cost basis is tracked
         # check if token is already in token states, if not then add
-        if transaction.token.lower() not in self.token_states:
-            self.token_states[transaction.token.lower()] = TaxTokenState(transaction.token.lower())
+        if transaction.token not in self.token_states:
+            self.token_states[transaction.token] = TaxTokenState(transaction.token)
         # create a new holding representing the tokens that were bought and their cost basis
-        holding = TaxHolding(transaction.token.lower(), transaction.time, transaction.token_price, transaction.token_fee_adjusted_price, transaction.volume)
-        self.token_states[transaction.token.lower()].add_holding(holding)
+        holding = TaxHolding(transaction.token, transaction.time, transaction.token_price, transaction.token_fee_adjusted_price, transaction.volume)
+        self.token_states[transaction.token].add_holding(holding)
 
     def process_sell(self, transaction):
         # check if token is already in token states, if not then add
-        if transaction.token.lower() not in self.token_states:
-            self.token_states[transaction.token.lower()] = TaxTokenState(transaction.token.lower())
+        if transaction.token not in self.token_states:
+            self.token_states[transaction.token] = TaxTokenState(transaction.token)
         # get cost basis of token from holdings, and process the difference in value as capital gains
-        holding_info = self.token_states[transaction.token.lower()].subtract_holding(transaction.volume)
+        holding_info = self.token_states[transaction.token].subtract_holding(transaction.volume, transaction)
 
         # process the tax, calculating whether 50% CG discount applies
         for start_time, start_price, start_volume in holding_info:
@@ -66,20 +66,20 @@ class TaxState(FeatureState):
 
         # add gained tokens to holdings, so that cost basis is tracked
         # check if token is already in token states, if not then add
-        if transaction.token.lower() not in self.token_states:
-            self.token_states[transaction.token.lower()] = TaxTokenState(transaction.token.lower())
+        if transaction.token not in self.token_states:
+            self.token_states[transaction.token] = TaxTokenState(transaction.token)
         # create a new holding representing the tokens that were gained and their cost basis
-        holding = TaxHolding(transaction.token.lower(), transaction.time, transaction.token_price, transaction.token_fee_adjusted_price, transaction.volume)
-        self.token_states[transaction.token.lower()].add_holding(holding)
+        holding = TaxHolding(transaction.token, transaction.time, transaction.token_price, transaction.token_fee_adjusted_price, transaction.volume)
+        self.token_states[transaction.token].add_holding(holding)
 
     def process_loss(self, transaction):
         # used when there is a genuine loss
         # if crypto is gifted or otherwise disposed of at market price, this should have been considered a sell at market price
         # check if token is already in token states, if not then add
-        if transaction.token.lower() not in self.token_states:
-            self.token_states[transaction.token.lower()] = TaxTokenState(transaction.token.lower())
+        if transaction.token not in self.token_states:
+            self.token_states[transaction.token] = TaxTokenState(transaction.token)
         # get cost basis of token from holdings, and process the difference in value as capital loss
-        holding_info = self.token_states[transaction.token.lower()].subtract_holding(transaction.volume)
+        holding_info = self.token_states[transaction.token].subtract_holding(transaction.volume, transaction)
 
         # process the tax, calculating whether 50% CG discount applies
         for start_time, start_price, start_volume in holding_info:
@@ -89,7 +89,11 @@ class TaxState(FeatureState):
     def adjust_tax(self, start_time, end_time, token, tax_type, start_price, end_price, volume, amount):
         tax_year, _ = calculate_tax_year(end_time)
         # note down transactions eligible for 50% discount
-        discount = (end_time > start_time + relativedelta(months=+12))
+        # handle gains which don't have start time
+        if not start_time:
+            discount = False
+        else:
+            discount = (end_time > start_time + relativedelta(months=+12))
         self.tax_years[tax_year].append([start_time, end_time, token, tax_type, start_price, end_price, volume, discount, amount])
 
     def finish_processing(self, file_name):
@@ -165,7 +169,7 @@ class TaxTokenState(TokenState):
     def __init__(self, name):
         super().__init__(name)
 
-    def subtract_holding(self, sell_volume):
+    def subtract_holding(self, sell_volume, transaction):
         """May involve subtracting from an existing holding or removing a completely used-up holding."""
         # work through queue of buy transactions, subtracting until all of the sell volume is used up
         holding_info = []
@@ -177,14 +181,16 @@ class TaxTokenState(TokenState):
                     holding.volume -= sell_volume
                     heapq.heappush(self.holdings, holding)
                     holding_info.append((holding.time, holding.tax_price, sell_volume))
+                    sell_volume = 0
                 else:
                     # if the sell amount >= the holding, no need to push back
                     holding_info.append((holding.time, holding.tax_price, holding.volume))
+                    sell_volume -= holding.volume
             else:
                 # if we've run out of holdings before getting through all of the sell volume, there's probably been
                 # a mistake or not all transactions were processed correctly when creating the transaction bank
                 # get the needed info from the user
-                print(f"Token: {self.name}, remaining volume not matched: {sell_volume}")
+                print(f"Transaction: {transaction} \nRemaining volume not matched: {sell_volume}")
                 print("Not enough holdings from buy/income transactions were found to match this disposal. Please enter the necessary information for taxes.")
                 time = get_user_input("Time when acquired: (YYYY-MM-DD HH:MM:SS) ", 'datetime')
                 tz = get_user_input(f"What timezone is this time in, as an offset from UTC? (eg. +10, -9 etc.) ", 'int')
@@ -232,28 +238,37 @@ def tax_process_all_transactions(transaction_bank, start_date, end_date, currenc
 
     # transaction bank is a dictionary of (token ticker: list of transactions) pairs
     # go through tokens, processing each transaction and the tax consequences
-    for ((token, token_hash), transactions) in transaction_bank.items():
+    for (token, transactions) in transaction_bank.items():
+        # sort the list of transactions by date
+        transactions.sort(key=lambda x: x.time)
+        print("-------------------------------------------------------------------------------------------------")
+        print(f"Processing transactions involving {token}, here is the list: ")
+        for transaction in transactions:
+            print(f"{transaction}")
+
         # if token is fiat currency, only process gains as taxable
-        if token.lower() == currency.lower():
+        if type(token) is not tuple and token.lower() == currency.lower():
             for transaction in transactions:
                 if transaction.transaction_type == TransactionType.GAIN:
                     tax.process_gain(transaction)
-
-        # sort the list of transactions by date
-        transactions.sort()
-
-        # go through transactions in chronological order
-        for transaction in transactions:
-            if transaction.transaction_type == TransactionType.BUY:
-                tax.process_buy(transaction)
-            elif transaction.transaction_type == TransactionType.SELL:
-                tax.process_sell(transaction)
-            elif transaction.transaction_type == TransactionType.GAIN:
-                tax.process_gain(transaction)
-            elif transaction.transaction_type == TransactionType.LOSS:
-                tax.process_loss(transaction)
-            else:
-                raise Exception("Transaction Type is not valid")
+                    print(f"Gain of {token} processed")
+        else:
+            # go through transactions in chronological order
+            for transaction in transactions:
+                if transaction.transaction_type == TransactionType.BUY:
+                    tax.process_buy(transaction)
+                    print(f"Buy of {token} processed")
+                elif transaction.transaction_type == TransactionType.SELL:
+                    tax.process_sell(transaction)
+                    print(f"Sell of {token} processed")
+                elif transaction.transaction_type == TransactionType.GAIN:
+                    tax.process_gain(transaction)
+                    print(f"Gain of {token} processed")
+                elif transaction.transaction_type == TransactionType.LOSS:
+                    tax.process_loss(transaction)
+                    print(f"Loss of {token} processed")
+                else:
+                    raise Exception("Transaction Type is not valid")
 
     # finish processing
     file_name = input("Processing finished. \nOutput file name: ")
@@ -288,9 +303,10 @@ def process_tax():
     start_date = get_user_input(f"Enter the start date: (YYYY-MM-DD) ", 'date')
     start_tz = get_user_input(f"What timezone is this date in, as an offset from UTC? (eg. +10, -9 etc.) ", 'int')
     start_date -= datetime.timedelta(hours=start_tz)
-    end_date = get_user_input(f"Enter the end date: (YYYY-MM-DD) ", 'date')
+    end_date = get_user_input(f"Enter the end date (inclusive): (YYYY-MM-DD) ", 'date')
     end_tz = get_user_input(f"What timezone is this date in, as an offset from UTC? (eg. +10, -9 etc.) ", 'int')
     end_date -= datetime.timedelta(hours=end_tz)
+    end_date += datetime.timedelta(days=1)
 
     transaction_bank = tax_read_in_transactions()
     print("Returned transaction bank")
