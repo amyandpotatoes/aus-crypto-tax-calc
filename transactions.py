@@ -970,7 +970,7 @@ def parse_onchain_transactions(chain, wallet, df, transaction_hash, currency='au
                                'quantity': quantity})
 
     # get internal transactions related to hash
-    api_domains = {'ethereum': 'api.etherscan.io', 'polygon': 'api.polygonscan.com', 'bsc': 'api.bscscan.com', 'ftmscan': 'api.ftmscan.com'}
+    api_domains = {'ethereum': 'api.etherscan.io', 'polygon': 'api.polygonscan.com', 'bsc': 'api.bscscan.com', 'fantom': 'api.ftmscan.com'}
     api_key = get_api_keys()[chain]
     response = requests.get(f"https://{api_domains[chain]}/api?module=account&action=txlistinternal&txhash={transaction_hash}&apikey={api_key}")
 
