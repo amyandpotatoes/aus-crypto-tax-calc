@@ -191,7 +191,7 @@ def printProgressBar (iteration, total, prefix='', suffix='', decimals=1, length
 
 
 def store_token_price(token, token_hash, time, price):
-    if token.lower() == 'cake-lp':
+    if token.lower() == 'cake-lp' or token.lower() == 'slp':
         if token.lower() in PREVIOUS_PRICES.keys():
             PREVIOUS_PRICES[(token, token_hash)][time] = price
         else:
@@ -205,7 +205,7 @@ def store_token_price(token, token_hash, time, price):
 
 def retrieve_token_price(token, token_hash, time, verbose=True):
     prices = []
-    if token.lower() == 'cake-lp':
+    if token.lower() == 'cake-lp' or token.lower() == 'slp':
         if (token, token_hash) in PREVIOUS_PRICES.keys():
             for prev_time in PREVIOUS_PRICES[(token, token_hash)].keys():
                 if time-datetime.timedelta(hours=24) <= prev_time <= time+datetime.timedelta(hours=24):
@@ -745,7 +745,7 @@ def add_transactions_w_opposite(transaction_bank, self_moves, self_values, self_
 
         print(temp_transaction)
         _ = input('Adding above transaction... (Press enter to continue)')
-        if move['token'].lower() == 'cake-lp':
+        if move['token'].lower() == 'cake-lp' or move['token'].lower() == 'slp':
             if move['token'] in transaction_bank:
                 transaction_bank[(move['token'], move['token_contract'])].append(temp_transaction)
             else:
@@ -781,7 +781,7 @@ def add_transactions_no_opposite(transaction_bank, self_moves, self_count, self_
         print(vars(temp_transaction))
         if not silent_income:
             _ = input('Adding above transaction... (Press enter to continue)')
-        if move['token'].lower() == 'cake-lp':
+        if move['token'].lower() == 'cake-lp' or move['token'].lower() == 'slp':
             if move['token'] in transaction_bank:
                 transaction_bank[(move['token'], move['token_contract'])].append(temp_transaction)
             else:
