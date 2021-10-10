@@ -45,7 +45,7 @@ place this in the /transaction-files/binance folder. This programs supports tran
 all CSVs in this folder will be read in sequence.
 Ensure your transaction history includes:  
 - trading activity
-- any binance ethereum staking (trading ETH for BETH) and income
+- any binance ethereum staking (trading ETH for BETH) and income - note this one seems very hard to export, you might need to copy-paste
 - any locked staking income
 - any other income
 
