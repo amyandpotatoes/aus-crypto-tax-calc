@@ -397,7 +397,7 @@ def get_token_price(token, token_contract_address, transaction_time, chain, orig
     print(f"Estimating price for {token} from other transactions...")
     method1 = input(f"Would you like to try method 1? (y/N) ")
     if method1.lower() == 'y':
-        api_domains = {'ethereum': 'api.etherscan.io', 'polygon': 'api.polygonscan.com', 'bsc': 'api.bscscan.com', 'ftmscan': 'api.ftmscan.com'}
+        api_domains = {'ethereum': 'api.etherscan.io', 'polygon': 'api.polygonscan.com', 'bsc': 'api.bscscan.com', 'fantom': 'api.ftmscan.com'}
 
         # get latest block before provided time
         api_key = get_api_keys()[chain]
