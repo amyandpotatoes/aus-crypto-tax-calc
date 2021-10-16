@@ -5,9 +5,16 @@ ensure that they are correct and meet current tax laws. This program uses the fi
 calculating tax bases, and assumes that you are eligible for 50% capital gains tax discounts on tokens held for longer 
 than a year.
 
+### Current status
+- import_onchain_transactions: working
+- transactions.py: Binance working, Coinspot working, BTCMarkets working, ethereum/bsc/polygon/fantom working with small bugs (see Known issues)
+- tax.py: working
+
 ### Supported platforms
 This program currently only supports the following Centralised Exchanges and blockchains:
-- Binance
+- Binance (buy/sell, 'earn', eth 2.0 staking)
+- CoinSpot (buy/sell only)
+- BTCMarkets (buy/sell only)
 - ethereum
 - binance smart chain
 - polygon
@@ -40,7 +47,7 @@ fantom: FTMSCANKEYHERE
 wallet1: '0x1234567812345678123456781234567812345678'
 wallet2: '0x1234567812345678123456781234567812345678'
 ```
-3. If you have any binance transactions, extract a CSV transaction summary for the appropriate time frame from binance and 
+3. If you have any binance transactions or other earnings including staking  or 'earn' income, extract a CSV transaction summary for the appropriate time frame from binance and 
 place this in the /transaction-files/binance folder. This programs supports transactions spread across multiple CSVs, so 
 all CSVs in this folder will be read in sequence.
 Ensure your transaction history includes:  
@@ -48,6 +55,8 @@ Ensure your transaction history includes:
 - any binance ethereum staking (trading ETH for BETH) and income - note this one seems very hard to export, you might need to copy-paste
 - any locked staking income
 - any other income
+
+4. If you have any CoinSpot or BTCMarket
 
 ### How to run
 
