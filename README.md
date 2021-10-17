@@ -56,7 +56,7 @@ Ensure your transaction history includes:
 - any locked staking income
 - any other income
 
-4. If you have any CoinSpot or BTCMarket
+4. If you have any CoinSpot or BTCMarket transactions, export CSVs of these transactions a place them in the /transaction-files/coinspot and /transaction-files/btcmarkets folders.
 
 ### How to run
 
