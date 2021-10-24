@@ -1,5 +1,5 @@
 # aus-crypto-tax-calc
-This program allows you to easily work through and summarise your cryptocurrency transaction, to make it easier to lodge
+This calculator processes and summarises cryptocurrency transactions to make it easier to lodge
 an Australian personal tax return. This is not tax advice, and you should carefully look through the the calculations to 
 ensure that they are correct and meet current tax laws. This program uses the first-in-first-out (FIFO) method of 
 calculating tax bases, and assumes that you are eligible for 50% capital gains tax discounts on tokens held for longer 
@@ -70,9 +70,13 @@ Then run the 'import_onchain_transaction.py' module.
 
 Next, run the 'transactions.py' module to parse transactions and categorise them. Each time a transaction is parsed, progress is saved to a file which can be retrieved later.
 
-Next, run the 'tax.py' module to produce a summary of transactions, capital gains and income.
+Next, run the 'tax.py' module to produce a csv summary of transactions, capital gains and income.
 
 ### Known issues
 
 - native tokens (BNB/MATIC etc.) sometimes doesn't get parsed correctly when used to make an LP/swapping using a DEX, you'll need to add the native token manually when the question 'Would you like to make any changes?' is asked
 - sometimes the quantity in a transaction (usually USDC or USDT?) for onchain transactions is missing 10 zeros, delete and create a new entry as above
+
+### Support
+
+If you would like to support this project, you can use this wallet address: 0x0BD679d61F2E25fa0BeC619661884Ecc1654b335 (preferred BSC or polygon)
