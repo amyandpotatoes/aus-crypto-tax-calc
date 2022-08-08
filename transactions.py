@@ -17,6 +17,7 @@ from enum import Enum, auto
 from pycoingecko import CoinGeckoAPI
 from io import StringIO
 from collections import Counter
+import re
 
 warnings.filterwarnings("ignore")
 
@@ -1144,7 +1145,7 @@ def parse_and_classify_binance_transaction(transaction, transaction_time, transa
     temp_moves = []
     class_int = 1
     for op, row, index in transaction:
-        if op.lower() in ['pos savings interest', 'rewards distribution', 'savings interest']:
+        if op.lower() in ['pos savings interest', 'rewards distribution', 'savings interest', 'interest']:
             temp_moves.append({'token': row['Coin'],
                                'token_contract': None,
                                'direction': 'in',
@@ -1210,16 +1211,270 @@ def parse_and_classify_binance_transaction(transaction, transaction_time, transa
     return temp_moves, gas_fee_fiat, class_int, in_count, out_count
 
 
-def read_binance_csv(transaction_bank, processed_transaction_hashes, pickle_file_name, start_date, end_date, currency='aud'):
+def read_binance_csv_beth_staking_2022(transaction_bank, processed_transaction_hashes, pickle_file_name, start_date, end_date, currency='aud'):
     """
-    Reads in a csv file from binance and adds transactions to the transaction bank.
+    Reads in a csv file from binance in 2022 format for locked staking and adds transactions to the transaction bank.
+    :param transaction_bank: a dictionary mapping each token to a list of transactions
+    :param start_date: datetime object of earliest date to get transactions from
+    :param end_date: datetime object of latest date to get transactions from
+    :return: The updated transaction_bank dictionary
+        """
+    # read all files for a given chain into single data frame
+    path = os.path.join('transaction-files', 'binance-2022-beth')
+    all_files = glob.glob(path + "/*.csv")
+
+    df_list = []
+
+    for filename in all_files:
+        df = pd.read_csv(filename, index_col=None, header=0)
+        df_list.append(df)
+
+    df = pd.concat(df_list, axis=0, ignore_index=True)
+    df.rename(columns={'Date(UTC)': 'UTC_Time', 'Token': 'Coin', 'Amount': 'Change'}, inplace=True)
+    df['UTC_Time'] = pd.to_datetime(df['UTC_Time'], format="%Y-%m-%d %H:%M:%S")
+    transaction_list = []
+
+    # iterate through each row and add to transaction list
+    # all locked staking interest transactions can be treated as independent
+    for index, row in df.iterrows():
+        if start_date <= row['UTC_Time'] < end_date:
+            # add transaction to transaction_list
+            transaction = [('interest', row, index)]
+            transaction_list.append(transaction)
+
+    skip = input(f"Would you like to skip confirmation for income transactions? (y/N) ")
+    if skip.lower() == 'y':
+        silent_income = True
+    else:
+        silent_income = False
+
+    for transaction in transaction_list:
+        transaction_time = transaction[0][1]['UTC_Time']
+        hash_string = str(transaction_time) + '-' + '-'.join([op + row['Coin'] + str(row['Change']) for op, row, index in transaction])
+        transaction_hash = hashlib.md5(hash_string.encode('utf-8')).hexdigest()
+
+        if transaction_hash in processed_transaction_hashes:
+            continue
+        print("-------------------------------------------------------------------------------------------------")
+
+        print(f"Transaction hash: {transaction_hash}")
+        print(f"Transaction time: {transaction_time}")
+
+        temp_moves, gas_fee_fiat, class_int, in_count, out_count = parse_and_classify_binance_transaction(transaction, transaction_time, transaction_hash, currency, silent_income)
+
+        # Use classification to add to transaction bank
+        add_transaction_to_transaction_bank(class_int, transaction_bank, temp_moves, in_count, out_count, gas_fee_fiat, transaction_time, 'binance', transaction_hash, currency,
+                                            silent_income)
+
+        # mark transaction hash as processed
+        processed_transaction_hashes.append(transaction_hash)
+
+        # pickle progress so far
+        filename = os.path.join(os.path.dirname(__file__), "results", "transactions", f"{pickle_file_name}.p")
+        with open(filename, "wb") as pickle_file:
+            pickle.dump((transaction_bank, processed_transaction_hashes, PREVIOUS_PRICES), pickle_file)
+        print(f"Progress saved to {filename}")
+
+
+def parse_coin_pair(pair):
+    """
+    Parse a string naming a pair of coins into the names of the two coins.
+    Example: 'BETHETH' -> ('BETH', 'ETH')
+    :param pair: a string
+    :return: a tuple of strings
+    """
+    common_coins = ['AUD', 'BUSD', 'USDC', 'ETH', 'BTC', 'ADA', 'SOL', 'LUNA', 'DOT']
+    for coin in common_coins:
+        if pair != None and coin in pair:
+            if pair.startswith(coin):
+                name1 = coin
+                name2 = pair[len(coin):]
+            else:
+                name1 = pair[:-len(coin)]
+                name2 = coin
+            break
+    else:
+        print('Was not able to determine which coins were in pair {}'.format(pair))
+
+    return (name1, name2)
+
+
+def split_gen(x):
+    """
+    Split a string into substrings of letters and numbers.
+    For example: '2348BETH' -> ('2348', 'BETH')
+    """
+    for f, s in re.findall(r'([\d.]+)|([^\d.]+)', x):
+        if f:
+            float(f)
+            yield f
+        else:
+            yield s
+
+
+def parse_amount_binance(a):
+    """
+    Convert from 0.1583000000BETH(str) to 0.1583000000(int).
+    :param executed:
+    :return:
+    """
+    a = str(a)
+    l = list(split_gen(a))
+    return float(l[0])
+
+
+def read_binance_csv_trade_2022(transaction_bank, processed_transaction_hashes, pickle_file_name, start_date, end_date, currency='aud'):
+    """
+    Reads in a csv file from binance in 2022 format for trades and adds transactions to the transaction bank.
+    :param transaction_bank: a dictionary mapping each token to a list of transactions
+    :param start_date: datetime object of earliest date to get transactions from
+    :param end_date: datetime object of latest date to get transactions from
+    :return: The updated transaction_bank dictionary
+    #TODO: handle fees
+    """
+    # read all files for a given chain into single data frame
+    path = os.path.join('transaction-files', 'binance-2022-trade')
+    all_files = glob.glob(path + "/*.csv")
+
+    df_list = []
+
+    for filename in all_files:
+        df = pd.read_csv(filename, index_col=None, header=0)
+        df_list.append(df)
+
+    df = pd.concat(df_list, axis=0, ignore_index=True)
+    df.rename(columns={'Date(UTC)': 'UTC_Time'}, inplace=True)
+    df['UTC_Time'] = pd.to_datetime(df['UTC_Time'], format="%Y-%m-%d %H:%M:%S")
+    transaction_list = []
+
+    # iterate through each row and create both the buy and the sell portions
+    temp_transaction = []
+    for index, row in df.iterrows():
+        if start_date <= row['UTC_Time'] < end_date:
+            # add transaction to transaction_list
+            coin1, coin2 = parse_coin_pair(row['Pair'])
+            if row['Side'] == 'BUY':
+                change1 = parse_amount_binance(row['Executed'])
+                change2 = -1 * parse_amount_binance(row['Amount'])
+            elif row['Side'] == 'SELL':
+                change1 = -1 * parse_amount_binance(row['Executed'])
+                change2 = parse_amount_binance(row['Amount'])
+            else:
+                raise Exception("Field 'Side' in csv was neither buy nor sell, it was: {}".format(row['Side']))
+
+            new_row1 = pd.Series(data={'Coin': coin1, 'Change': change1, 'UTC_Time': row['UTC_Time']})
+            new_row2 = pd.Series(data={'Coin': coin2, 'Change': change2, 'UTC_Time': row['UTC_Time']})
+            transaction = [('buyandsell', new_row1, index), ('buyandsell', new_row2, index)]
+            transaction_list.append(transaction)
+
+    skip = input(f"Would you like to skip confirmation for income transactions? (y/N) ")
+    if skip.lower() == 'y':
+        silent_income = True
+    else:
+        silent_income = False
+
+    for transaction in transaction_list:
+        transaction_time = transaction[0][1]['UTC_Time']
+        hash_string = str(transaction_time) + '-' + '-'.join([op+row['Coin']+str(row['Change']) for op, row, index in transaction])
+        transaction_hash = hashlib.md5(hash_string.encode('utf-8')).hexdigest()
+
+        if transaction_hash in processed_transaction_hashes:
+            continue
+        print("-------------------------------------------------------------------------------------------------")
+
+        print(f"Transaction hash: {transaction_hash}")
+        print(f"Transaction time: {transaction_time}")
+
+        temp_moves, gas_fee_fiat, class_int, in_count, out_count = parse_and_classify_binance_transaction(transaction, transaction_time, transaction_hash, currency, silent_income)
+
+        # Use classification to add to transaction bank
+        add_transaction_to_transaction_bank(class_int, transaction_bank, temp_moves, in_count, out_count, gas_fee_fiat, transaction_time, 'binance', transaction_hash, currency, silent_income)
+
+        # mark transaction hash as processed
+        processed_transaction_hashes.append(transaction_hash)
+
+        # pickle progress so far
+        filename = os.path.join(os.path.dirname(__file__), "results", "transactions", f"{pickle_file_name}.p")
+        with open(filename, "wb") as pickle_file:
+            pickle.dump((transaction_bank, processed_transaction_hashes, PREVIOUS_PRICES), pickle_file)
+        print(f"Progress saved to {filename}")
+
+
+def read_binance_csv_locked_staking_2022(transaction_bank, processed_transaction_hashes, pickle_file_name, start_date, end_date, currency='aud'):
+    """
+    Reads in a csv file from binance in 2022 format for locked staking and adds transactions to the transaction bank.
+    :param transaction_bank: a dictionary mapping each token to a list of transactions
+    :param start_date: datetime object of earliest date to get transactions from
+    :param end_date: datetime object of latest date to get transactions from
+    :return: The updated transaction_bank dictionary
+        """
+    # read all files for a given chain into single data frame
+    path = os.path.join('transaction-files', 'binance-2022-locked')
+    all_files = glob.glob(path + "/*.csv")
+
+    df_list = []
+
+    for filename in all_files:
+        df = pd.read_csv(filename, index_col=None, header=0)
+        df_list.append(df)
+
+    df = pd.concat(df_list, axis=0, ignore_index=True)
+    df.rename(columns={'Date(UTC)': 'UTC_Time', 'Interest': 'Change'}, inplace=True)
+    df['UTC_Time'] = pd.to_datetime(df['UTC_Time'], format="%Y-%m-%d")
+    transaction_list = []
+
+    # iterate through each row and add to transaction list
+    # all locked staking interest transactions can be treated as independent
+    for index, row in df.iterrows():
+        if start_date <= row['UTC_Time'] < end_date:
+            # add transaction to transaction_list
+            transaction = [('interest', row, index)]
+            transaction_list.append(transaction)
+
+    skip = input(f"Would you like to skip confirmation for income transactions? (y/N) ")
+    if skip.lower() == 'y':
+        silent_income = True
+    else:
+        silent_income = False
+
+    for transaction in transaction_list:
+        transaction_time = transaction[0][1]['UTC_Time']
+        hash_string = str(transaction_time) + '-' + '-'.join([op + row['Coin'] + str(row['Change']) for op, row, index in transaction])
+        transaction_hash = hashlib.md5(hash_string.encode('utf-8')).hexdigest()
+
+        if transaction_hash in processed_transaction_hashes:
+            continue
+        print("-------------------------------------------------------------------------------------------------")
+
+        print(f"Transaction hash: {transaction_hash}")
+        print(f"Transaction time: {transaction_time}")
+
+        temp_moves, gas_fee_fiat, class_int, in_count, out_count = parse_and_classify_binance_transaction(transaction, transaction_time, transaction_hash, currency, silent_income)
+
+        # Use classification to add to transaction bank
+        add_transaction_to_transaction_bank(class_int, transaction_bank, temp_moves, in_count, out_count, gas_fee_fiat, transaction_time, 'binance', transaction_hash, currency,
+                                            silent_income)
+
+        # mark transaction hash as processed
+        processed_transaction_hashes.append(transaction_hash)
+
+        # pickle progress so far
+        filename = os.path.join(os.path.dirname(__file__), "results", "transactions", f"{pickle_file_name}.p")
+        with open(filename, "wb") as pickle_file:
+            pickle.dump((transaction_bank, processed_transaction_hashes, PREVIOUS_PRICES), pickle_file)
+        print(f"Progress saved to {filename}")
+
+
+def read_binance_csv_2021(transaction_bank, processed_transaction_hashes, pickle_file_name, start_date, end_date, currency='aud'):
+    """
+    Reads in a csv file from binance in 2021 format and adds transactions to the transaction bank.
     :param transaction_bank: a dictionary mapping each token to a list of transactions
     :param start_date: datetime object of earliest date to get transactions from
     :param end_date: datetime object of latest date to get transactions from
     :return: The updated transaction_bank dictionary
     """
     # read all files for a given chain into single data frame
-    path = os.path.join('transaction-files', 'binance')
+    path = os.path.join('transaction-files', 'binance-2021')
     all_files = glob.glob(path + "/*.csv")
 
     df_list = []
@@ -1546,9 +1801,21 @@ def read_all_transactions():
     end_date -= datetime.timedelta(hours=end_tz)
     end_date += datetime.timedelta(days=1)
 
-    process = input(f"Would you like to process Binance transactions? (Y/n) ")
+    process = input(f"Would you like to process Binance 2021 transactions? (Y/n) ")
     if process.lower() != "n":
-        read_binance_csv(transaction_bank, processed_transaction_hashes, pickle_file_name, start_date, end_date)
+        read_binance_csv_2021(transaction_bank, processed_transaction_hashes, pickle_file_name, start_date, end_date)
+
+    process = input(f"Would you like to process Binance 2022 trading transactions? (Y/n) ")
+    if process.lower() != "n":
+        read_binance_csv_trade_2022(transaction_bank, processed_transaction_hashes, pickle_file_name, start_date, end_date)
+
+    process = input(f"Would you like to process Binance 2022 BETH interest transactions? (Y/n) ")
+    if process.lower() != "n":
+        read_binance_csv_beth_staking_2022(transaction_bank, processed_transaction_hashes, pickle_file_name, start_date, end_date)
+
+    process = input(f"Would you like to process Binance 2022 locked staking interest transactions? (Y/n) ")
+    if process.lower() != "n":
+        read_binance_csv_locked_staking_2022(transaction_bank, processed_transaction_hashes, pickle_file_name, start_date, end_date)
 
     process = input(f"Would you like to process BTCMarkets transactions? (Y/n) ")
     if process.lower() != "n":

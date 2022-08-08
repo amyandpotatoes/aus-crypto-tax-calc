@@ -130,7 +130,9 @@ class TaxState(FeatureState):
                                      (self.tax_years[tax_year]['Value'] < 0)].sum()
 
             # calculate total capital gains as 'discount-ineligible CG - capital losses + 0.5 * (discount-eligible CG - remaining capital losses)
-            if cap_losses > discount_ineligible_cap_gains:
+            if cap_losses > discount_ineligible_cap_gains + discount_eligible_cap_gains:
+                cap_gains = cap_losses - (discount_ineligible_cap_gains + discount_eligible_cap_gains)
+            elif cap_losses > discount_ineligible_cap_gains:
                 cap_gains = 0.5 * (discount_ineligible_cap_gains + discount_eligible_cap_gains - cap_losses)
             else:
                 cap_gains = (discount_ineligible_cap_gains - cap_losses) + (0.5 * discount_eligible_cap_gains)
