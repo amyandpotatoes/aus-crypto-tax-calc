@@ -5,6 +5,9 @@ ensure that they are correct and meet current tax laws. This program uses the fi
 calculating tax bases, and assumes that you are eligible for 50% capital gains tax discounts on tokens held for longer 
 than a year.
 
+### Updates
+08/08/2022: updated transactions.py to handle binance's new 2022 data export format and fixed bug in tax.py that incorrectly calculated overall cg when cg was net negative
+
 ### Current status
 - import_onchain_transactions: working
 - transactions.py: Binance working, Coinspot working, BTCMarkets working, ethereum/bsc/polygon/fantom working with small bugs (see Known issues)
@@ -47,12 +50,15 @@ fantom: FTMSCANKEYHERE
 wallet1: '0x1234567812345678123456781234567812345678'
 wallet2: '0x1234567812345678123456781234567812345678'
 ```
-3. If you have any binance transactions or other earnings including staking  or 'earn' income, extract a CSV transaction summary for the appropriate time frame from binance and 
-place this in the /transaction-files/binance folder. This programs supports transactions spread across multiple CSVs, so 
+3. If you have any binance transactions or other earnings including staking  or 'earn' income, extract a CSV transaction summary for the appropriate time frame from binance. For 
+exports in the 2021 format, place these in the /transaction-files/binance-2021 folder. For exports in binance's current (2022) format, place the exports in the binance-2022-beth 
+(for ETH staking), binance-2022-locked (for non-ETH locked staking) and binance-2022-trade (for buy/sells) folders respectively.
+
+This programs supports transactions spread across multiple CSVs, so 
 all CSVs in this folder will be read in sequence.
 Ensure your transaction history includes:  
 - trading activity
-- any binance ethereum staking (trading ETH for BETH) and income - note this one seems very hard to export, you might need to copy-paste
+- any binance ethereum staking (trading ETH for BETH) and income
 - any locked staking income
 - any other income
 
